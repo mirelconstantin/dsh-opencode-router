@@ -38,13 +38,20 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
-      - name: Unit tests
+      # The suite reads lib/, so it is built here rather than in a separate
+      # job: `lib/` is gitignored, so a clean checkout has none of it.
+      - name: Build both bundles
+        run: |
+          pnpm run build
+          pnpm run build:client
+
+      - name: Unit and artifact tests
         run: pnpm test
 
       - name: Plugin and patch contracts
         run: pnpm run verify:all
 
-  build:
+  pack:
     runs-on: ubuntu-latest
     needs: check
     steps:
@@ -62,18 +69,11 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Build both bundles
+      - name: Build and pack
         run: |
           pnpm run build
           pnpm run build:client
-
-      # The artifact tests import lib/ and walk the chunk graph, so they run
-      # after the build rather than in the check job.
-      - name: Artifact tests
-        run: pnpm test
-
-      - name: Pack
-        run: pnpm pack --pack-destination .
+          pnpm pack --pack-destination .
 
       - uses: actions/upload-artifact@v4
         with:

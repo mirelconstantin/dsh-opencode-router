@@ -12,11 +12,9 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import vm from 'node:vm'
-
-const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+import { builtTest, lib, root } from './helpers.ts'
 
 /**
  * A `document` and `window` stand-in covering exactly what the bundle touches:
@@ -43,7 +41,7 @@ const externals: Record<string, unknown> = {
 }
 
 describe('the client bundle under the shell loader', () => {
-  test('evaluates and registers a factory the loader can call', async () => {
+  builtTest('evaluates and registers a factory the loader can call', async () => {
     const source = await readFile(join(root, 'lib', 'client.js'), 'utf8')
     const env = makeEnvironment()
     let registered: { id: string; factory: (require: (id: string) => unknown) => unknown } | undefined
@@ -81,7 +79,7 @@ describe('the client bundle under the shell loader', () => {
     assert.ok(exported, 'the factory must return the module exports')
   })
 
-  test('appends exactly one stylesheet, tagged with the plugin id', async () => {
+  builtTest('appends exactly one stylesheet, tagged with the plugin id', async () => {
     const source = await readFile(join(root, 'lib', 'client.js'), 'utf8')
     const appended: Array<Record<string, unknown>> = []
     const document = {
