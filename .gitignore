@@ -1,0 +1,20 @@
+# Dependencies and build output
+node_modules/
+lib/
+*.tgz
+
+# Local state written by the plugin at runtime
+.adapter-status.json
+.opencode2dsh/
+dist/
+coverage/
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.swp
+
+# Tooling caches
+.tsbuildinfo
+.eslintcache
+.oxlintcache

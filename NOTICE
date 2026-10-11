@@ -1,0 +1,27 @@
+dsh-opencode-router
+Copyright 2026 dsh-opencode-router contributors (the plugin)
+
+This plugin descends from opencode2dsh by FishBottle7, which is MIT licensed.
+The original copyright notice is retained verbatim below, as that licence
+requires for derivative works.
+
+--------------------------------------------------------------------------------
+
+Upstream notice, as published in FishBottle7/opencode2dsh LICENSE:
+
+MIT License
+
+Copyright (c) 2026 FishBottle7
+
+--------------------------------------------------------------------------------
+
+Third-party runtime dependencies, each under its own licence:
+
+  @earendil-works/pi-ai   model wire layer used by adapter mode
+  undici                  HTTP client carrying the proxy routing dispatcher
+  yaml                    subscription / Clash configuration parsing
+
+The public endpoints this plugin calls belong to their operators:
+
+  OpenCode Zen (opencode.ai)   the anonymous free lane it routes to
+  models.dev                   model metadata used to decide which models are free

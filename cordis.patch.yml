@@ -1,0 +1,9 @@
+# dsh-opencode-router — bundle entry: insert the plugin row (deployment-global).
+#
+# Defaults need no edits: the adapter registers immediately and warms the
+# free-model catalog in the background. Override any option through the
+# profile's cordis.patch.yml (see the plugin README table).
+- insert:
+    - id: opencode2dsh
+      name: 'dsh-opencode-router'
+      config: {}

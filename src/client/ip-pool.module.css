@@ -1,0 +1,408 @@
+/* IP 池 settings page body — the form the Plugins page renders inside its own
+   detail section (token usage copied from dsh-llm-proxy, verified against the
+   DSH palette). The page owns the card chrome, title and save control. */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.status {
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  margin: 4px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fieldRow {
+  display: flex;
+  gap: 10px;
+}
+
+.fieldRow > .field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.fieldLabel {
+  color: var(--dsw-alias-label-primary, #1f2329);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.fieldHint {
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2, #f6f8fa);
+  color: var(--dsw-alias-label-primary, #1f2329);
+  font-size: 13px;
+}
+
+/* Inheriting the page's scheme lets the host own light and dark; pinning it
+   here only ever matched one of the two themes. */
+:global(body[data-ds-dark-theme]) .input,
+:global(body[data-ds-dark-theme]) .select {
+  color-scheme: dark;
+}
+
+.input:focus-visible,
+.select:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #4f8cff);
+  outline-offset: -1px;
+}
+
+.textarea {
+  composes: input;
+  min-height: 96px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+/* Every control on the page needs a visible keyboard focus ring; the host
+   resets outlines on buttons, so each one carries its own. */
+.rowRemove:focus-visible,
+.rowAdd:focus-visible,
+.ghostButton:focus-visible,
+.collapseToggle:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #4f8cff);
+  outline-offset: 1px;
+}
+
+.rowList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-block-size: 260px;
+  overflow-y: auto;
+}
+
+/* -- bulk paste ---------------------------------------------------------------- */
+
+.bulkBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px dashed var(--dsw-alias-border-l3, #a6adb4);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, #f6f8fa);
+}
+
+.bulkSummary {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .rowList {
+    scrollbar-width: thin;
+  }
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rowLabel {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary, #1f2329);
+  font-size: 13px;
+}
+
+.rowInput {
+  composes: input;
+  flex: 1 1 0;
+}
+
+.rowRemove {
+  flex: none;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2, #f6f8fa);
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.rowRemove:hover {
+  border-color: var(--dsw-alias-state-error-primary, #d1242f);
+  color: var(--dsw-alias-state-error-primary, #d1242f);
+}
+
+.rowAdd {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border: 1px dashed var(--dsw-alias-border-l3, #a6adb4);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.rowAdd:hover {
+  border-color: var(--dsw-alias-state-business-primary, #4f8cff);
+  color: var(--dsw-alias-state-business-primary, #4f8cff);
+}
+
+.ghostButton {
+  padding: 6px 12px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2, #f6f8fa);
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ghostButton:hover {
+  border-color: var(--dsw-alias-border-l3, #a6adb4);
+}
+
+.saveStatus {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.saveStatusOk {
+  color: var(--dsw-alias-state-success-primary, #1a7f37);
+}
+
+.saveStatusError {
+  color: var(--dsw-alias-state-error-primary, #d1242f);
+}
+
+/* -- status overview strip --------------------------------------------------- */
+
+.overviewBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, #f6f8fa);
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  white-space: nowrap;
+}
+
+.badgeHealthy {
+  border-color: var(--dsw-alias-state-success-primary, #1a7f37);
+  color: var(--dsw-alias-state-success-primary, #1a7f37);
+}
+
+.badgeWarning {
+  border-color: var(--dsw-alias-state-warn-primary, #9a6700);
+  color: var(--dsw-alias-state-warn-primary, #9a6700);
+}
+
+/* Critical and emergency are separate severities, so they read differently:
+   critical is the error colour, emergency adds a filled background to mark it
+   as the last state before the pool is empty. */
+.badgeCritical {
+  border-color: var(--dsw-alias-state-error-primary, #d1242f);
+  color: var(--dsw-alias-state-error-primary, #d1242f);
+}
+
+.badgeEmergency {
+  border-color: var(--dsw-alias-state-error-primary, #d1242f);
+  background: var(--dsw-alias-state-error-primary, #d1242f);
+  color: var(--dsw-alias-bg-layer-1, #ffffff);
+}
+
+.badgePinned {
+  border-color: var(--dsw-alias-state-business-primary, #4f8cff);
+  color: var(--dsw-alias-state-business-primary, #4f8cff);
+}
+
+/* -- capacity meter ----------------------------------------------------------- */
+
+.meter {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 92px;
+  block-size: 16px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  background: var(--dsw-alias-bg-layer-1, #ffffff);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.meterFill {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  background: var(--dsw-alias-state-success-primary, #1a7f37);
+  opacity: 0.28;
+  transition: inline-size 240ms ease;
+}
+
+.meterLabel {
+  position: relative;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+}
+
+.meterWarning .meterFill {
+  background: var(--dsw-alias-state-warn-primary, #9a6700);
+}
+
+.meterCritical .meterFill {
+  background: var(--dsw-alias-state-error-primary, #d1242f);
+}
+
+.meter:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #4f8cff);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meterFill {
+    transition: none;
+  }
+}
+
+/* -- exit table ---------------------------------------------------------------- */
+
+.table {
+  display: block;
+  overflow-x: auto;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 8px;
+}
+
+.tableGrid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.tableGrid th,
+.tableGrid td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  text-align: left;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  white-space: nowrap;
+}
+
+.tableGrid th {
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, #1f2329);
+  background: var(--dsw-alias-bg-layer-2, #f6f8fa);
+}
+
+.tableGrid tr:last-child td {
+  border-bottom: none;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.stateOk {
+  color: var(--dsw-alias-state-success-primary, #1a7f37);
+}
+
+.stateCooling {
+  color: var(--dsw-alias-state-warn-primary, #9a6700);
+}
+
+.stateDead {
+  color: var(--dsw-alias-state-error-primary, #d1242f);
+}
+
+.stateUnknown {
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+}
+
+/* -- sections + radios ----------------------------------------------------------- */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, rgba(246, 248, 254, .5));
+}
+
+.sectionTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, #1f2329);
+}
+
+.radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary, #4b5563);
+  cursor: pointer;
+}
+
+.compliance {
+  color: var(--dsw-alias-label-tertiary, #6b7280);
+  font-size: 11px;
+  line-height: 1.5;
+  border-top: 1px dashed var(--dsw-alias-border-l2, #d0d7de);
+  padding-top: 10px;
+}
+
+.collapseToggle {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border: none;
+  background: none;
+  color: var(--dsw-alias-state-business-primary, #4f8cff);
+  font-size: 12px;
+  cursor: pointer;
+}

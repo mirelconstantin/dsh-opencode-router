@@ -1,0 +1,134 @@
+{
+  "name": "dsh-opencode-router",
+  "version": "1.1.0",
+  "description": "OpenCode Zen free models for DeepSeek Harness: a native dsh-llm adapter that needs no API key, with a proxy exit pool that rotates, probes and scales to hundreds of exits.",
+  "icon": "./icon.svg",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src",
+    "scripts",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "dsh-plugins",
+    "dsh-external",
+    "cordis",
+    "plugin",
+    "opencode",
+    "opencode-zen",
+    "llm-adapter",
+    "llm-provider",
+    "free-models",
+    "free-llm",
+    "proxy-pool",
+    "ip-pool",
+    "llm",
+    "ai-models",
+    "nodejs"
+  ],
+  "license": "MIT",
+  "author": "Pazalo (https://github.com/pazalo)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mirelconstantin/dsh-opencode-router.git"
+  },
+  "homepage": "https://github.com/mirelconstantin/dsh-opencode-router#readme",
+  "bugs": {
+    "url": "https://github.com/mirelconstantin/dsh-opencode-router/issues"
+  },
+  "packageManager": "pnpm@10.27.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.0-0 <0.3.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ],
+      "platform": "web",
+      "external": [
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.0-rc.2": "compatible"
+      }
+    }
+  },
+  "scripts": {
+    "build": "node scripts/clean.mjs && tsdown src/index.ts --format esm --dts --out-dir lib --no-clean",
+    "build:client": "tsdown -c tsdown.client.config.ts",
+    "clean": "node scripts/clean.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types \"test/*.test.ts\"",
+    "test:live": "node scripts/live.mjs",
+    "check:plugin": "node scripts/check-plugin.mjs",
+    "check:patch": "node scripts/check-patch.mjs",
+    "verify:all": "node scripts/check-plugin.mjs && node scripts/check-patch.mjs",
+    "prepack": "node scripts/prepack.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.82.1",
+    "undici": "^8.10.1",
+    "yaml": "^2.9.0"
+  },
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "@google/genai",
+      "protobufjs"
+    ]
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": ">=3.18.4 <4",
+    "@deepseek-ai/dsh-llm": ">=0.2.0-0 <0.3.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-client-locale": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-credentials": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-settings": "0.2.0-rc.2",
+    "@types/node": "^24.0.0",
+    "@types/react": "~18.3.31",
+    "lightningcss": "1.32.0",
+    "react": "^18.3.1",
+    "tsdown": "^0.15.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,16 @@
+# Keep the bundle reproducible across platforms: the build output is generated
+# with LF endings regardless of the checkout, and the sources are text.
+* text=auto eol=lf
+
+*.js  text
+*.ts  text
+*.tsx text
+*.mjs text
+*.css text
+*.yml text
+*.json text
+*.md  text
+*.svg text
+
+*.png binary
+*.tgz binary
