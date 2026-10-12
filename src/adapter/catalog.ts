@@ -23,15 +23,18 @@ export const ZEN_BASE_URL = 'https://opencode.ai/zen'
  *   exo-free                             410 ModelDeprecated (upstream delisted)
  *   jev-1.13-free                        400 ModelProtocolUnsupported (SystemOne-only)
  *   ling-3.0-flash-fin-free              400 "Model is unavailable" (upstream-side)
- *   muse-spark-1.*-contributor-free      403 RegionError, chat and responses alike
  * Remove an entry only after a live probe of the chat lane answers 200/429.
+ *
+ * The muse-spark contributor pair was here for a 403 RegionError probed
+ * 2026-10-10. Re-probed 2026-10-12 on /zen/v1/responses with the full
+ * free-lane recipe (canonical ses_*, stream, bash+read): both answer 200 and
+ * a real question returns correctly, so the block was transient and they are
+ * served again.
  */
 export const FREE_LANE_BLOCKLIST: ReadonlySet<string> = new Set([
   'exo-free',
   'jev-1.13-free',
   'ling-3.0-flash-fin-free',
-  'muse-spark-1.2-contributor-free',
-  'muse-spark-1.3-contributor-free',
 ])
 
 /** Verified against the anonymous lane with a real chat (agent/internal/catalog/static_models.go). */
@@ -39,10 +42,10 @@ export const staticFreeModels: string[] = [
   'big-pickle', // verified 2026-08-28: anonymous chat 200 (non-stream + stream)
   'mimo-v2.5-free', // verified 2026-08-28: anonymous chat 200 (non-stream); models.dev deprecated since 2026-10-03, still answers
   'mimo-v2.6-flash-free', // verified 2026-10-03: anonymous chat 200 (stream, adapter path); successor of mimo-v2.5-free
-  'ling-3.0-flash-fin-free', // verified 2026-09-01: anonymous chat 200
   'nemotron-3.5-lightning-free', // verified 2026-09-01: anonymous chat 200
   'nemotron-3-ultra-free', // verified 2026-09-01: anonymous chat 200 (7s, earlier timeout was transient)
-  'muse-spark-1.2-contributor-free', // verified 2026-09-01: listed free in docs pricing; 403 region-blocked from our probe, region restriction accepted as non-fatal
+  'muse-spark-1.2-contributor-free', // verified 2026-10-12: anonymous responses 200; the 403 that blocklisted it on 2026-10-10 is gone
+  'muse-spark-1.3-contributor-free', // verified 2026-10-12: anonymous responses 200, correct answer (17*23)
 ]
 
 /** Exposed by /v1/models but without a verified anonymous chat yet. */
