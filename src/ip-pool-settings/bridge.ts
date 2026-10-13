@@ -13,7 +13,7 @@
  */
 
 import type { IpPoolRuntime } from '../ip-pool.ts'
-import type { PoolState, ExitSource } from '../pool/pool.ts'
+import type { PoolState, ExitSource, ExitUsage } from '../pool/pool.ts'
 
 /** Bridge route prefix (same-origin, loopback-only). */
 export const IP_POOL_BRIDGE_PREFIX = '/api/opencode2dsh/ip-pool'
@@ -37,8 +37,15 @@ export interface ExitRowView {
   cooldownUntil: number
   consecutiveLimited: number
   bannedModels: Array<{ model: string; state: 'suspect' | 'banned'; bannedAt: number }>
+  /** Whether this is the pool's pinned exit (the GUI's picker writes this
+   *  through POST /pin; it is separate from `pinned` on the status view,
+   *  which describes the pin's strictness). */
+  pinnedFlag: boolean
   /** Passive-signal counters from real requests (docs §4.3, IP-6). */
   passive: { ok: number; limited: number; refused: number; dead: number; transport: number }
+  /** How much traffic this exit carried in this process, and what it cost in
+   *  tokens, or null when never used. In-memory only, not a durable record. */
+  usage: ExitUsage | null
 }
 
 export interface ProberView {
@@ -55,7 +62,7 @@ export interface RefillView {
   coarsePassed: number
   state: string
   at: number
-  /** Live in-flight round progress (docs §5.3, 立即补充 feedback). */
+  /** Live in-flight round progress (docs §5.3, refill feedback). */
   progress: { running: boolean; stage: 'fetch' | 'coarse' | 'admit' | 'idle'; sourcesDone: number; sourcesTotal: number; fetched: number; candidates: number; coarsePassed: number; coarseDone: number; admissions: number; admitted: number }
 }
 
@@ -69,6 +76,17 @@ export interface SubscriptionView {
   lastError: string
 }
 
+/**
+ * The proxy that served the most recent upstream request, or null when
+ * nothing has routed through an exit yet. `routed` is false whenever the
+ * pool is off, deferred to another dispatcher plugin, or had no usable
+ * exit — in every one of those cases the last request went out direct.
+ */
+export interface CurrentExitView {
+  exitId: string
+  at: number
+}
+
 export interface PoolStatusView {
   enabled: boolean
   /** Non-empty when the pool runs but the routing layer deferred to another
@@ -80,8 +98,14 @@ export interface PoolStatusView {
   availableFree: number
   targetSize: number
   pinned: { id: string; strict: boolean } | null
+  /** True when the user chose "no proxy": the pool is running but declines
+   *  to route, so every request goes direct. Distinct from `pinned === null`,
+   *  which means "choose for me". */
+  bypass: boolean
   proxyHosts: string[]
   exits: ExitRowView[]
+  /** The exit the last request used (the GUI's current-proxy chip). */
+  currentExit: CurrentExitView | null
   prober: ProberView
   refill: RefillView | null
   subscription: SubscriptionView | null
@@ -104,6 +128,7 @@ export function buildStatusView(
       source: entry.source,
       protocol: entry.protocol,
       pinned: entry.pinned,
+      pinnedFlag: entry.pinned,
       exitIP: entry.exitIP,
       exitLocation: entry.exitLocation,
       latencyMs: entry.latencyMs,
@@ -116,6 +141,9 @@ export function buildStatusView(
         .filter((b) => b.ban.state !== 'ok')
         .map((b) => ({ model: b.model, state: b.ban.state as 'suspect' | 'banned', bannedAt: b.ban.bannedAt })),
       passive: runtime.pool.passiveStats(entry.id),
+      // Usage rides each row so the GUI's picker can show "used 3 times, 2m
+      // ago" without a second request.
+      usage: runtime.pool.usageOf(entry.id),
     }))
     : []
   return {
@@ -133,6 +161,12 @@ export function buildStatusView(
       : null,
     proxyHosts,
     exits,
+    // The dispatcher records the exit that carried each real dispatch, so a
+    // pinned exit reads here even though pick() returns before its sticky
+    // write. Null means nothing has routed yet, which for the readout is
+    // indistinguishable from direct.
+    currentExit: runtime ? runtime.pool.lastRoutedExit() : null,
+    bypass: runtime ? runtime.pool.bypass : false,
     prober: runtime
       ? runtime.prober.stats
       : { queued: 0, inFlight: 0, enqueued: 0, completed: 0 },
@@ -248,7 +282,9 @@ export type BridgeResult = { ok: true; value: unknown } | { ok: false; code: str
 export interface BridgeHandlers {
   status(): Promise<BridgeResult>
   probe(body: { scope?: unknown; exitId?: unknown }): Promise<BridgeResult>
-  /** Selectable probe models (docs §5.2 探活模型 dropdown): S3 static list
+  /** Models the GUI's picker sends: one of 'auto', 'direct' or 'exit'. */
+  pin(body: { mode?: unknown; exitId?: unknown }): Promise<BridgeResult>
+  /** Selectable probe models (docs §5.2 probe-model dropdown): S3 static list
    *  first, then the live Zen catalog entries the runtime resolved. */
   models(): Promise<BridgeResult>
 }
@@ -282,13 +318,49 @@ export function makeBridgeHandlers(
         await rt.refillNow()
         return { ok: true, value: { refilled: true } }
       }
+      // The subscription lane the settings card's refresh button drives. It is
+      // deliberately distinct from 'refill', which pulls the public free-proxy
+      // sources: this one re-fetches ONLY the configured subscription URLs and
+      // converts their encrypted nodes.
+      if (scope === 'subscriptions') {
+        if (rt.subscriptions === null) {
+          return { ok: false, code: 'no-subscriptions', message: 'no subscription URLs are configured' }
+        }
+        await rt.refreshSubscriptions()
+        return { ok: true, value: { refreshed: true, urlCount: rt.subscriptions.urlCount } }
+      }
       if (scope === 'exit') {
         const exitId = typeof body.exitId === 'string' ? body.exitId : ''
         if (!rt.pool.has(exitId)) return { ok: false, code: 'unknown-exit', message: `exit "${exitId}" is not in the pool` }
         const count = await rt.probeExit(exitId)
         return { ok: true, value: { queued: count } }
       }
-      return { ok: false, code: 'settings-rejected', message: "probe scope must be 'all', 'exit' or 'refill'" }
+      return { ok: false, code: 'settings-rejected', message: "probe scope must be 'all', 'exit', 'refill' or 'subscriptions'" }
+    },
+    async pin(body) {
+      const rt = runtime()
+      if (rt === null) return { ok: false, code: 'pool-disabled', message: 'ip pool is not running (enabled off)' }
+      // Three modes, because "route nothing" and "choose for me" are
+      // different answers and the picker offers both.
+      const mode = body.mode
+      if (mode === 'direct') {
+        await rt.setRouting({ mode: 'direct' })
+        return { ok: true, value: { pinned: null, bypass: true } }
+      }
+      if (mode === 'auto') {
+        await rt.setRouting({ mode: 'auto' })
+        return { ok: true, value: { pinned: null, bypass: false } }
+      }
+      if (mode !== 'exit') {
+        return { ok: false, code: 'settings-rejected', message: "pin mode must be 'auto', 'direct' or 'exit'" }
+      }
+      const exitId = typeof body.exitId === 'string' ? body.exitId : ''
+      if (!rt.pool.has(exitId)) return { ok: false, code: 'unknown-exit', message: `exit "${exitId}" is not in the pool` }
+      // A dead exit can be pinned on purpose (it is the one the user wants to
+      // debug), so this does not require the exit to be healthy.
+      const pinned = await rt.setRouting({ mode: 'exit', exitId })
+      if (!pinned) return { ok: false, code: 'pin-rejected', message: `could not pin "${exitId}"` }
+      return { ok: true, value: { pinned: exitId, bypass: false } }
     },
     async models() {
       const { staticFreeModels } = await import('../adapter/catalog.ts')
@@ -367,6 +439,25 @@ export function makeBridgeRoutes(
           return
         }
         const result = await handlers.probe(body as { scope?: unknown; exitId?: unknown })
+        writeJson(res as never, 200, result)
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${IP_POOL_BRIDGE_PREFIX}/pin`,
+      handler: async (req, res) => {
+        if (!check(req as never, res as never)) return
+        let body: unknown
+        try {
+          body = await readJsonBody(req as never)
+        } catch {
+          body = undefined
+        }
+        if (body === undefined || typeof body !== 'object' || body === null) {
+          writeJson(res as never, 400, { ok: false, code: 'settings-rejected', message: 'unreadable JSON body' })
+          return
+        }
+        const result = await handlers.pin(body as { exitId?: unknown })
         writeJson(res as never, 200, result)
       },
     },

@@ -112,7 +112,7 @@ export function applyIpPoolSettings(
     })
   }
 
-  // The plugin supplies its own page (the client half's IP 池 card), so tell
+  // The plugin supplies its own page (the client half's IP Pool card), so tell
   // the settings domain not to auto-generate one for this entry. Requested
   // lazily: `settings` must stay out of `inject` or a headless composition
   // that does not compose it would never activate the provider route.
@@ -167,7 +167,7 @@ export function applyIpPoolSettings(
     })) as unknown as Promise<unknown>
   }
 
-  logger.info(`opencode2dsh: settings namespace "${IP_POOL_NAMESPACE}" served from the plugin's volatile Config — live apply via 设置 → 插件 → IP 池`)
+  logger.info(`opencode2dsh: settings namespace "${IP_POOL_NAMESPACE}" served from the plugin's volatile Config — live apply via Plugins page -> the plugin row -> IP Pool`)
   const maybeEffect = (ctx as { effect?: PluginContext['effect'] }).effect
   if (typeof maybeEffect === 'function') {
     maybeEffect.call(ctx, () => () => {

@@ -24,6 +24,8 @@
  */
 
 import Schema from '@deepseek-ai/schemastery'
+import { resolveSubscriptionUrls } from './subscription-urls.ts'
+import { DEFAULT_SUBSCRIPTION_USER_AGENT, normalizeSubscriptionUserAgent } from '../pool/subscription-defaults.ts'
 
 /**
  * Settings namespace owned by this plugin: the Loader entry id declared by
@@ -88,6 +90,8 @@ export const IpPoolConfigSchema = Schema.object({
     urls: Schema.array(Schema.string()).default([]),
     /** Subscription refresh interval (§4.6, one request per URL per refresh). */
     refreshMs: Schema.number().min(60_000).max(24 * 60 * 60_000).step(1).default(30 * 60_000),
+    /** Fetch UA presented to the airport; blank means the built-in default. */
+    userAgent: Schema.string().default(DEFAULT_SUBSCRIPTION_USER_AGENT),
   }),
   singbox: Schema.object({
     /** sing-box binary: PATH name or absolute path; empty parks encrypted nodes. */
@@ -110,7 +114,7 @@ export interface IpPoolSettings {
   maxConcurrentProbes: number
   free: { enabled: boolean; targetSize: number; blockedCountries: string[] }
   manual: string[]
-  subscription: { urls: string[]; refreshMs: number }
+  subscription: { urls: string[]; refreshMs: number; userAgent: string }
   singbox: { path: string }
   pinnedExitId: string
   pinnedStrict: boolean
@@ -160,7 +164,10 @@ export interface AnyIpPoolSection {
  */
 export function resolveIpPoolSettings(value: AnyIpPoolSection | undefined): IpPoolSettings {
   const raw = value ?? {}
-  const urls = raw.subscriptions ?? raw.subscription?.urls ?? []
+  // NOT a `??` chain: schemastery gives Schema.array() an implicit `[]`
+  // default, so the flat key is never nullish and `??` would always discard
+  // the canonical nested list. See subscription-urls.ts for the full reason.
+  const urls = resolveSubscriptionUrls(raw)
   return {
     enabled: raw.enabled ?? false,
     probeModels: raw.probeModels ?? [],
@@ -174,6 +181,7 @@ export function resolveIpPoolSettings(value: AnyIpPoolSection | undefined): IpPo
     subscription: {
       urls,
       refreshMs: raw.subscription?.refreshMs ?? 30 * 60_000,
+      userAgent: normalizeSubscriptionUserAgent(raw.subscription?.userAgent),
     },
     singbox: { path: raw.singbox?.path ?? 'sing-box' },
     pinnedExitId: raw.pinnedExitId ?? '',
@@ -196,7 +204,7 @@ export function toIpPoolConfig(value: IpPoolSettings): {
   proxyHosts: string[]
   free: { enabled: boolean; targetSize: number; blockedCountries: string[] }
   subscriptions: string[]
-  subscription: { refreshMs: number }
+  subscription: { refreshMs: number; userAgent: string }
   singbox: { path: string }
   probeModels: string[]
   maxConcurrentProbes: number
@@ -214,7 +222,7 @@ export function toIpPoolConfig(value: IpPoolSettings): {
       blockedCountries: value.free.blockedCountries,
     },
     subscriptions: value.subscription.urls,
-    subscription: { refreshMs: value.subscription.refreshMs },
+    subscription: { refreshMs: value.subscription.refreshMs, userAgent: value.subscription.userAgent },
     singbox: { path: value.singbox.path },
     probeModels: resolveProbeModels(value.probeModels),
     maxConcurrentProbes: value.maxConcurrentProbes,
