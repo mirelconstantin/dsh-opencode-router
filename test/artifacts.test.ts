@@ -146,4 +146,32 @@ describe('the built client bundle', () => {
     assert.match(source, /data-plugin-css/)
     assert.match(source, /dsh-opencode-router\/ip-pool\.module\.css/)
   })
+
+  test('ships AGENTS.md so the release rules travel with the package', async () => {
+    // An agent handed only the installed tarball cannot be asked to follow a
+    // rule that was not installed. `files` in package.json is what decides
+    // this, so the check reads the manifest rather than trusting the repo.
+    const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+    assert.ok(manifest.files.includes('AGENTS.md'), 'AGENTS.md must be in package.json `files`')
+
+    const agents = await readFile(join(root, 'AGENTS.md'), 'utf8')
+    // The release rule itself, so a rewrite cannot quietly drop it. Anchored
+    // at the line start: a plain substring test would accept
+    // `npm version patch --dry-run`, which is exactly the wrong advice.
+    assert.match(agents, /^npm version patch --no-git-tag-version$/m, 'the bump command must stay documented')
+    assert.match(agents, /^npm publish --access public$/m, 'the publish command must stay documented')
+    assert.match(agents, /^npm tag add latest@/m, 'the dist-tag command must stay documented')
+  })
+
+  test('the version in package.json is the one the manifest ships', async () => {
+    // The README quotes a pinned install version; a stale one sends users to a
+    // version that may not exist yet.
+    const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+    const readme = await readFile(join(root, 'README.md'), 'utf8')
+    assert.match(
+      readme,
+      new RegExp(`dsh-opencode-router@${manifest.version.replace(/\./g, '\\.')}`),
+      'the README pinned-install example should quote the current version',
+    )
+  })
 })

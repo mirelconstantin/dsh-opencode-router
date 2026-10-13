@@ -42,7 +42,7 @@ dsh plugin add dsh-opencode-router --profile web
 
 | Route | Command |
 |---|---|
-| Pinned to a version | `dsh plugin add dsh-opencode-router@1.1.0 --profile web` |
+| Pinned to a version | `dsh plugin add dsh-opencode-router@1.1.1 --profile web` |
 | Pinned to a commit | `dsh plugin add github:mirelconstantin/dsh-opencode-router#<sha>` |
 | Tarball | `dsh plugin add ./dsh-opencode-router-1.1.0.tgz` |
 | Local checkout | `dsh plugin add /absolute/path/to/dsh-opencode-router` |
@@ -297,6 +297,16 @@ exists, that the bundle patch installs the package the manifest names, that the 
 plugin's own `name` export, and that the client bundle registers under the id the shell loader
 expects. `pnpm run clean` removes `lib/` before a build, because the node build keeps its output
 directory and a renamed module would otherwise leave its previous chunk behind.
+
+`pnpm run build` cleans `lib/` before it builds, and `build:client` must follow it — the artifact
+tests read the built bundle, so they fail with ENOENT rather than for a real reason when `lib/` is
+missing.
+
+**Releases.** Every change that ships gets a new version number — bump `version` in `package.json`,
+then `npm version patch --no-git-tag-version` does it for you. `npm` refuses a duplicate version, so
+`1.1.1` can never become `1.1.1` again; the number you publish is the number that exists. The full
+sequence, including the client-bundle import rules and the config defaults that must be changed in
+two places, is in [AGENTS.md](AGENTS.md).
 
 The test suite covers the exit pool's selection order, cooldown and ban semantics, the bulk-paste
 parser, and the built artifacts themselves: it imports `lib/`, walks the chunk graph to prove no
