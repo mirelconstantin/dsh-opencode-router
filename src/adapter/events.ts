@@ -70,7 +70,17 @@ function classifyError(text: string): string {
   // Zen uses HTTP 403 for regional availability too. AUTH makes DSH replace
   // the actual upstream message with "API key is invalid".
   if (/\bRegionError\b|not available in your country/i.test(text)) return 'REGION_BLOCKED'
-  if (/\b(?:401|403)\b/.test(text)) return 'AUTH'
+  // Only a 401 is a credential refusal. This lane sends no key at all
+  // (`Bearer public`), and a 403 on it is the free-lane gate or a block — which
+  // AUTH would report as "API key is invalid", hiding the real reason.
+  if (/\b401\b/.test(text)) return 'AUTH'
+  // A free-lane 403 means the CLIENT is restricted, not the credential. It must
+  // not fall through to the generic 403 branch below, which the host treats as
+  // a retryable upstream fault: rotating every exit would produce exactly the
+  // same refusal on all of them and the session would churn instead of
+  // reporting the real reason.
+  if (/\bFreeTierError\b|free tier can only be used from within OpenCode/i.test(text)) return 'FREE_TIER_RESTRICTED'
+  if (/\b403\b/.test(text)) return 'UPSTREAM'
   if (/insufficient|quota|billing/i.test(text)) return QUOTA_EXCEEDED
   if (/\b429\b|rate.?limit/i.test(text)) return 'RATE_LIMIT'
   if (/\b413\b|payload too large|request body too large/i.test(text)) return 'INVALID_REQUEST'

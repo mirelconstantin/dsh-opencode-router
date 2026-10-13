@@ -9,7 +9,7 @@ import { ensureFreeLaneShape, ensureResponsesFreeLaneShape, GATE_TOOL_ALIASES, t
 import { apiForModel, isResponsesModel } from './routing.ts'
 export { apiForModel, isResponsesModel } from './routing.ts'
 import { routingContext, type RoutingContext } from '../pool/dispatcher.ts'
-import { classifyStreamFailure, isRegionBlocked, shouldRotate } from '../pool/rotate.ts'
+import { billRoutedTokens, classifyStreamFailure, isRegionBlocked, shouldRotate } from '../pool/rotate.ts'
 
 /**
  * The TS adapter: registers as a DSH LlmAdapter for the `opencode2dsh` route
@@ -477,11 +477,18 @@ export class ZenAdapter {
         const current = usage?.usage
         const cacheReadTokens = (priorUsage?.cacheReadTokens ?? 0) + (current?.cacheReadTokens ?? 0)
         const cacheWriteTokens = (priorUsage?.cacheWriteTokens ?? 0) + (current?.cacheWriteTokens ?? 0)
+        const inputTokens = (priorUsage?.inputTokens ?? 0) + (current?.inputTokens ?? 0)
+        const outputTokens = (priorUsage?.outputTokens ?? 0) + (current?.outputTokens ?? 0)
+        // Bill the exit that actually carried this request, once, with the
+        // TOTALS above: a reasoning-recovery turn is two upstream calls billed
+        // as one, and the per-exit figure is meant to answer "what did this
+        // proxy cost me", not "how many upstream calls happened".
+        this.#billRoutedExit(inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens)
         yield priorUsage === undefined ? usage! : {
           type: 'usage',
           usage: {
-            inputTokens: priorUsage.inputTokens + (current?.inputTokens ?? 0),
-            outputTokens: priorUsage.outputTokens + (current?.outputTokens ?? 0),
+            inputTokens,
+            outputTokens,
             ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
             ...(cacheWriteTokens > 0 ? { cacheWriteTokens } : {}),
           },
@@ -490,6 +497,17 @@ export class ZenAdapter {
       if (finish) yield finish
       return
     }
+  }
+
+  /**
+   * Add one finished request's tokens to the exit that carried it.
+   *
+   * Routed through the module-level sink rather than a pool reference: the
+   * adapter is built before the pool exists, and a no-op sink is exactly right
+   * when routing is off.
+   */
+  #billRoutedExit(input: number, output: number, cacheRead: number, cacheWrite: number): void {
+    billRoutedTokens({ input, output, cacheRead, cacheWrite, requests: 1 })
   }
 
   /** Stream one attempt from the Zen anonymous lane.
@@ -667,13 +685,13 @@ export class ZenAdapter {
           const e = buffered[i] as PiEvent & { error?: { errorMessage?: string }; message?: { errorMessage?: string; stopReason?: string } }
           if (e.type === 'error' && e.error) {
             e.error.errorMessage = rotateStory.length > 1
-              ? `${e.error.errorMessage} (opencode2dsh 轮换 ${rotateStory.length - 1} 次后放弃: ${rotateStory.join(' -> ')})`
+              ? `${e.error.errorMessage} (opencode2dsh gave up after ${rotateStory.length - 1} rotations: ${rotateStory.join(' -> ')})`
               : e.error.errorMessage
             break
           }
           if (e.type === 'done' && e.message?.stopReason === 'error') {
             e.message.errorMessage = rotateStory.length > 1
-              ? `${e.message.errorMessage} (opencode2dsh 轮换 ${rotateStory.length - 1} 次后放弃: ${rotateStory.join(' -> ')})`
+              ? `${e.message.errorMessage} (opencode2dsh gave up after ${rotateStory.length - 1} rotations: ${rotateStory.join(' -> ')})`
               : e.message.errorMessage!
             break
           }

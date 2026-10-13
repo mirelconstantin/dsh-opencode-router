@@ -79,8 +79,13 @@ export interface IpPoolConfig {
   }
   /** Airport/Clash subscriptions (docs 1.2 source 3, IP-3). */
   subscriptions?: string[]
-  /** Subscription refresh interval ms (docs 4.6, default 30min). */
-  subscription?: { refreshMs?: number }
+  subscription?: {
+    refreshMs?: number
+    /** Canonical nested URL list; the flat key above is the legacy spelling. */
+    urls?: string[]
+    /** Fetch UA presented to the airport; blank means the built-in default. */
+    userAgent?: string
+  }
   /** Cross-exit probe concurrency cap (docs 4.1; same-exit always serial). */
   maxConcurrentProbes?: number
   /** sing-box conversion core for encrypted nodes (docs 1.2.2, IP-4). */

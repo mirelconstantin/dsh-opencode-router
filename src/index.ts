@@ -36,6 +36,9 @@ import { fetchHealth, fetchModels, registerProvider, removeProviderRoute } from 
 export interface PluginContext {
   logger: { info(...args: unknown[]): void; warn(...args: unknown[]): void; error(...args: unknown[]): void }
   llm?: { registerAdapter(providers: string[], adapter: unknown): unknown }
+  /** Older hosts invalidate their adapter roster through an event rather
+   *  than a registration handle; the catalog re-announce falls back to it. */
+  emit?(event: string): unknown
   credentials?: { set(ref: string, value: string): Promise<void> }
   /**
    * DSH 0.1.7 `SettingsForms` (dsh-settings). Read face for the sidecar's
@@ -62,7 +65,7 @@ export interface PluginContext {
 export const name = 'opencode2dsh'
 /**
  * The plugin's own settings schema. DSH 0.1.7 reads this export to decide
- * which fields are editable in 设置 → 插件 and under which namespace (the
+ * which fields are editable in Plugins page and under which namespace (the
  * Loader entry id), so it must be named `Config` on the plugin runtime.
  */
 export { Config } from './config.ts'
@@ -127,12 +130,37 @@ function applyAdapter(
     ).catch(() => {})
   }
 
+  // Declared up front so the catalog's onRefresh can reach it: the host
+  // caches its adapter roster per generation and the client caches the model
+  // list that follows it, so a catalog that fills in AFTER registration stays
+  // invisible until something invalidates both. Re-announce only when the
+  // roster actually changed, and never after dispose.
+  //
+  // `handle.replace` is the atomic swap the DSH registration handle offers and
+  // emits `llm/adapters-updated` itself; older hosts only have `ctx.emit`.
+  let catalogDisposed = false
+  let publishedCatalog = ''
+  let registration: unknown
+  const catalogSignature = (): string => JSON.stringify(catalog.list().sort().map((id) => [
+    id, catalog.limits(id), catalog.modalities(id), catalog.reasoningCapability(id),
+  ]))
+  const announceCatalogIfChanged = (): void => {
+    if (catalogDisposed) return
+    const signature = catalogSignature()
+    if (signature === publishedCatalog) return
+    publishedCatalog = signature
+    const handle = registration as { replace?: (providers: string[]) => void } | undefined
+    if (typeof handle?.replace === 'function') handle.replace([PROVIDER_ID])
+    else if (typeof ctx.emit === 'function') ctx.emit('llm/adapters-updated')
+  }
+
   const catalog = new ModelCatalog({
     refreshSeconds: cfg.refreshSeconds,
     cachePath: defaultCachePath(dataDir),
     onRefresh: (status, lastError) => {
       writeStatus(status, lastError)
       if (lastError) logger.warn(`opencode2dsh: catalog refresh issue: ${lastError}`)
+      announceCatalogIfChanged()
     },
   })
   const adapter = new ZenAdapter(catalog, {
@@ -148,7 +176,8 @@ function applyAdapter(
   // deliberately precedes every optional layer below — a throw anywhere in
   // the ip-pool wiring, the stale-route sweep, or the refresh loop must never
   // cost the deployment its only free provider.
-  ctx.llm.registerAdapter([PROVIDER_ID], adapter)
+  const registrationHandle = ctx.llm.registerAdapter([PROVIDER_ID], adapter)
+  registration = registrationHandle
   logger.info(`opencode2dsh: adapter registered for "${PROVIDER_ID}" (catalog warms up in background)`)
 
   // IP-pool exit routing (docs/ip-pool.md IP-1..IP-5): manual proxies,
@@ -194,6 +223,9 @@ function applyAdapter(
   const maybeEffect = (ctx as { effect?: PluginContext['effect'] }).effect
   if (typeof maybeEffect === 'function') {
     maybeEffect.call(ctx, () => () => {
+      // Stop announcing before stopping: a late refresh must not resurrect a
+      // registration for a fiber that is already unloading.
+      catalogDisposed = true
       catalog.stop()
     })
   }

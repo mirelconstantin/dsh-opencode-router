@@ -69,6 +69,11 @@ export function deriveRequestIDs(messages: Array<{ role: string; content: unknow
  * being sufficient (upstream fix: jasonxu114514/opencode2api 8185202).
  * Live-probed 2026-09-18: the gate has a second, body-shape half (streaming
  * + bash/read tools, adapter/messages.ts); both must pass.
+ * Live-probed 2026-10-13: the 12 hex characters must decode as OpenCode's
+ * ~(ms * 0x1000 + counter) stamp. A digest-derived prefix is the sole reason a
+ * fully gate-shaped request still 403s (9router#4780, opencode2dsh#62 — the
+ * 403 reaches DSH as "API key is invalid"); tools and the request-id header
+ * are not gates (200 without either).
  */
 const CANONICAL_SESSION_PATTERN = /^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/
 
@@ -95,9 +100,37 @@ function base62Fixed(value: bigint, width: number): string {
 export function canonicalSessionID(signal: string): string {
   if (CANONICAL_SESSION_PATTERN.test(signal)) return signal
   const sum = createHash('sha256').update('ses\x00' + signal).digest()
-  const timePart = sum.subarray(0, 6).toString('hex')
   const randomPart = base62Fixed(BigInt('0x' + sum.subarray(6, 16).toString('hex')), 14)
-  return `ses_${timePart}${randomPart}`
+  return `ses_${sessionStamp(sum.toString('hex'))}${randomPart}`
+}
+
+/**
+ * One OpenCode-shaped creation stamp: `~(ms * 0x1000 + counter)`, the low 48
+ * bits, which is what the real client encodes (upstream's identifier
+ * generator: clock, per-millisecond counter in the low 12 bits, then a
+ * bitwise inversion so ids sort newest first as plain strings).
+ *
+ * The `+ 1` is the counter and it is NOT cosmetic: the inversion flips those
+ * low bits, so upstream reads the segment back and checks it against a
+ * wall-clock reading. A digest-derived or zero-counter prefix has no such
+ * structure and is rejected even though it matches the regex (issue #62).
+ * We always mint counter 1: this plugin is the only writer of its own
+ * sessions, so a real per-millisecond counter would only add state.
+ *
+ * Held per conversation seed so a multi-turn conversation keeps ONE session
+ * id (and its prompt-cache affinity) while the stamp stays a decodable
+ * timestamp — recomputing it per request would rotate the session every turn.
+ */
+const SESSION_STAMP_LIMIT = 256
+const sessionStamps = new Map<string, string>()
+
+function sessionStamp(key: string): string {
+  const cached = sessionStamps.get(key)
+  if (cached !== undefined) return cached
+  if (sessionStamps.size >= SESSION_STAMP_LIMIT) sessionStamps.clear()
+  const stamp = ((~(BigInt(Date.now()) * 0x1000n + 1n)) & 0xFFFFFFFFFFFFn).toString(16).padStart(12, '0')
+  sessionStamps.set(key, stamp)
+  return stamp
 }
 
 /** CLI-identical user agent (ids.go opencodeUserAgent, node runtime values). */

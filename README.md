@@ -75,6 +75,90 @@ that exit-and-model pair. A dead exit is dropped after repeated failures. Real t
 pool as it goes: every response the router sees updates the same health the prober writes, so no
 probe quota is spent on exits that are already in use.
 
+## Seeing and choosing the proxy you are on
+
+A compact control sits under the composer — the bottom dock beside the
+context meter — for as long as the plugin is loaded. The chip names the exit
+your last request went through, or reads `direct` when nothing was proxied;
+its colour says whether that exit is still usable. A pool that is on but has
+no usable exit, or one that handed the global dispatcher to another plugin,
+says so, because "the pool is enabled" and "your traffic is proxied" are
+different facts.
+
+**Click it to choose.** The picker offers three answers, and they are not
+interchangeable:
+
+| Row | Meaning |
+|---|---|
+| *No proxy (direct)* | Route nothing. Every request goes out direct. |
+| *Automatic* | Let the pool choose and rotate. |
+| an exit row | Pin that exit until you change it. A dead exit can be pinned on purpose, which is how you debug a bad node. |
+
+Each exit row carries a state dot, its latency, and what it has cost you:
+
+- **Tokens** — the total that exit has carried, across every finished request,
+  broken out so a heavy conversation is visible. Next to it, the **share that
+  came from the prompt cache**: a cached prefix is billed far below a fresh
+  one, so a high percentage means the exit is carrying long sessions cheaply.
+  The tooltip explains the number.
+- **When it was last used** — `3 uses · 2m ago`.
+
+Rows order themselves the way you would choose: the current pin, then healthy
+exits, then ones that have actually carried traffic, then the rest by recency.
+A proven exit beats an untested one of the same health.
+
+*No proxy* is deliberately not the same as *Automatic*: unpinned still routes,
+and you may want routing off without touching settings. It also outranks a
+pin, so a pin left over from earlier cannot quietly resurrect routing.
+
+The chip reads the same `/status` bridge the settings page polls and writes
+through a loopback-guarded `POST /pin`, so it adds no new transport and no
+new configuration. It is deliberately not gated on the settings page being
+open: you need it mid-conversation, when the pool is misbehaving.
+
+The chip follows your **routing decision**, not just completed traffic:
+*No proxy* and a pinned exit both change the label the moment you click,
+because that is where the next request goes. A pin that has not carried
+traffic yet is labelled as a pin rather than claiming a request went through
+it. With nothing pinned, the readout falls back to the last completed
+request, so between a 429 rotation and the next one it names the exit the
+session is about to leave — which the tooltip states rather than hiding.
+Usage tallies and token counts are in-memory: they count this process's
+routing, not a durable record, and reset on restart.
+
+## How long one exit lasts
+
+The Zen free lane meters **per IP, per UTC day** — the bucket key is
+`ratelimit:ip:<ip>:<YYYYMMDD>`, not per API key and not global. Two things
+follow, and both are why rotation is worth having:
+
+- **A new exit IP is a fresh, empty bucket.** Rotation genuinely multiplies
+  the day's allowance rather than just spreading it around.
+- **The reset is midnight UTC, not 24h after your first request.** A 429 at
+  23:00 UTC clears in about an hour; at 01:00 UTC you wait nearly 23. This is
+  the upstream's own `retry-after` value, and the pool now uses it verbatim
+  when it arrives, computing the same reset itself when it does not.
+
+A *fresh* IP is treated more generously than an established one: below a
+lifetime threshold the upstream allows double the daily cap, so recently-seen
+exits are worth more than long-used ones.
+
+**The cap itself is not published.** The number lives in a server-side secret;
+the widely-quoted "200 requests/day" is community folklore with no official
+source. Plan against your own measured throughput, not that figure. Also note
+the cap counts **requests, not tokens** — a long agentic turn and a one-line
+prompt each cost one — and free models are IP-metered *even when
+authenticated*, because that is a property of the model, not the request.
+
+Two rotation details that look like bugs: IPv6 is truncated to a /64, so
+rotating addresses inside one /64 does nothing; and only the `retry-after`
+header is published, with no `x-ratelimit-remaining` to read.
+
+Note also that the limiter above was last open-sourced 2026-10-11 and Zen is
+now a thin proxy to a closed service, so these numbers can change without
+notice. See `research/opencode-zen-rate-limits.md` for the sources and the
+confirmed/inferred/unknown split.
+
 ## Managing a lot of proxies
 
 The settings page lives on the Plugins page, under the plugin's row, and every change applies on

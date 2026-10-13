@@ -1,5 +1,5 @@
 /**
- * IP 池 page body: the editable form on the Plugins page (the `plugins.item`
+ * IP Pool page body: the editable form on the Plugins page (the `plugins.item`
  * slot). Configuration rides the OFFICIAL settings form the Plugins page
  * supplies (`ConfigPageForm`: a `ConfigFormSnapshot` plus `mutate`), so
  * dsh-llm-proxy's loopback fallback compat layer is deliberately absent
@@ -15,7 +15,15 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { SettingsForm, type SettingsFormShell } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  IconCloseOutlineRegular,
+  IconPlusOutlineRegular,
+  IconRefreshOutlineRegular,
+  IconPinOutlineRegular,
+  IconTrashOutlineRegular,
+  SettingsForm,
+  type SettingsFormShell,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: the Plugins page's SlotMap merge (the 'plugins.item' list entry,
 // whose owner hands this page its one-liner and its ConfigPageForm).
@@ -26,6 +34,10 @@ import type { ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/cli
 import type { en } from './locales.ts'
 import styles from './ip-pool.module.css'
 import { fieldWrite, poolWriteOps, type FieldWrite } from './settings-writes.ts'
+// Dependency-free (and so safe for the browser bundle): the shared
+// subscription-URL precedence rule, also used by the host resolver.
+import { resolveSubscriptionUrls } from '../ip-pool-settings/subscription-urls.ts'
+import { DEFAULT_SUBSCRIPTION_USER_AGENT, normalizeSubscriptionUserAgent } from '../pool/subscription-defaults.ts'
 import { addressKey, parseListBlock, PROXY_SHAPE, URL_SHAPE, type ParsedList } from './address-list.ts'
 
 /** The reactive values and commands the Plugins page supplies for this page. */
@@ -42,7 +54,7 @@ export type ConfigPathOp =
   | { op: 'unset'; path: string[] }
 
 /**
- * Props the Plugins page binds for the IP 池 page: the view it asked for, the
+ * Props the Plugins page binds for the IP Pool page: the view it asked for, the
  * locale copy, and — for `view: 'page'` — the entry's settings form.
  */
 export type IpPoolCardProps =
@@ -71,7 +83,7 @@ export interface IpPoolSettingsValue {
   maxConcurrentProbes: number
   free: { enabled: boolean; targetSize: number; blockedCountries: string[] }
   manual: string[]
-  subscription: { urls: string[]; refreshMs: number }
+  subscription: { urls: string[]; refreshMs: number; userAgent: string }
   /** Previous composition spelling, migrated on a subscription edit. */
   subscriptions?: string[]
   singbox: { path: string }
@@ -133,7 +145,7 @@ const DEFAULTS: IpPoolSettingsValue = {
   maxConcurrentProbes: 3,
   free: { enabled: true, targetSize: 20, blockedCountries: ['CN'] },
   manual: [],
-  subscription: { urls: [], refreshMs: 30 * 60_000 },
+  subscription: { urls: [], refreshMs: 30 * 60_000, userAgent: DEFAULT_SUBSCRIPTION_USER_AGENT },
   singbox: { path: 'sing-box' },
   pinnedExitId: '',
   pinnedStrict: false,
@@ -156,6 +168,7 @@ interface FormState {
   manual: string[]
   subscriptionUrls: string[]
   refreshMs: string
+  userAgent: string
   singboxPath: string
   pinnedExitId: string
   pinnedStrict: boolean
@@ -172,6 +185,7 @@ function emptyForm(): FormState {
     manual: [],
     subscriptionUrls: [],
     refreshMs: String(DEFAULTS.subscription.refreshMs),
+    userAgent: DEFAULTS.subscription.userAgent,
     singboxPath: DEFAULTS.singbox.path,
     pinnedExitId: '',
     pinnedStrict: DEFAULTS.pinnedStrict,
@@ -189,6 +203,7 @@ function formFromValue(value: IpPoolSettingsValue): FormState {
     manual: [...value.manual],
     subscriptionUrls: [...value.subscription.urls],
     refreshMs: String(value.subscription.refreshMs),
+    userAgent: value.subscription.userAgent,
     singboxPath: value.singbox.path,
     pinnedExitId: value.pinnedExitId,
     pinnedStrict: value.pinnedStrict,
@@ -214,7 +229,7 @@ function servedSection(state: ConfigFormSnapshot<Record<string, unknown>> | unde
   return {
     ...DEFAULTS, ...served,
     free: { ...DEFAULTS.free, ...served?.free },
-    subscription: { ...DEFAULTS.subscription, ...served?.subscription, ...(served?.subscriptions === undefined ? {} : { urls: served.subscriptions }) },
+    subscription: { ...DEFAULTS.subscription, ...served?.subscription, urls: resolveSubscriptionUrls(served) },
     singbox: { ...DEFAULTS.singbox, ...served?.singbox },
   }
 }
@@ -233,7 +248,7 @@ function diffWrites(form: FormState, value: IpPoolSettingsValue, base: Partial<I
   push('enabled', form.enabled, value.enabled, base.enabled)
   push('free', { enabled: form.freeEnabled, targetSize: Number(form.targetSize), blockedCountries: splitCsv(form.blockedCountries) }, value.free, base.free)
   push('manual', form.manual, value.manual, base.manual)
-  push('subscription', { urls: form.subscriptionUrls, refreshMs: Number(form.refreshMs) }, value.subscription, base.subscription)
+  push('subscription', { urls: form.subscriptionUrls, refreshMs: Number(form.refreshMs), userAgent: normalizeSubscriptionUserAgent(form.userAgent) }, value.subscription, base.subscription)
   push('singbox', { path: form.singboxPath }, value.singbox, base.singbox)
   push('pinnedExitId', form.pinnedExitId, value.pinnedExitId, base.pinnedExitId)
   push('pinnedStrict', form.pinnedStrict, value.pinnedStrict, base.pinnedStrict)
@@ -369,11 +384,12 @@ function StringList(props: {
               </span>
               <button
                 type="button"
-                className={styles.rowRemove}
+                className={`${styles.button} ${styles.icon} ${styles.iconDanger}`}
                 aria-label={t('removeEntry', { entry: redacted ? redactUrl(entry) : entry })}
+                title={t('removeEntry', { entry: redacted ? redactUrl(entry) : entry })}
                 onClick={() => onChange(values.filter((v) => v !== entry))}
               >
-                ✕
+                <IconCloseOutlineRegular className={styles.glyph} aria-hidden={true} />
               </button>
             </li>
           ))}
@@ -387,7 +403,9 @@ function StringList(props: {
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); add() } }}
         />
-        <button type="button" className={styles.rowAdd} onClick={add}>+</button>
+        <button type="button" className={styles.rowAdd} onClick={add} aria-label={t('addEntry')}>
+          <IconPlusOutlineRegular className={styles.glyph} aria-hidden={true} />
+        </button>
       </div>
       <button
         type="button"
@@ -445,7 +463,7 @@ function StringList(props: {
 /**
  * Probe-model multi-select over the bridge /models rows: selected models as
  * removable chips above a dropdown of S3-verified + live-catalog options
- * (docs §5.2 探活模型). Empty selection = the S3-first default (big-pickle).
+ * (docs §5.2 probe models). Empty selection = the S3-first default (big-pickle).
  */
 function ModelPicker(props: {
   value: string[]
@@ -620,10 +638,30 @@ function ExitTable(props: { status: PoolStatusView | null; t: IpPoolCardProps['t
                     : '—'}
                 </td>
                 <td>
-                  <button type="button" className={styles.rowRemove} disabled={busy} onClick={() => onProbe(exit.id)}>{t('exitProbe')}</button>
-                  {!exit.pinned && (
-                    <button type="button" className={styles.rowRemove} disabled={busy} onClick={() => onPin(exit.id)}>{t('exitPin')}</button>
-                  )}
+                  <div className={styles.cellActions}>
+                    <button
+                      type="button"
+                      className={`${styles.button} ${styles.icon}`}
+                      disabled={busy}
+                      aria-label={t('exitProbe')}
+                      title={t('exitProbe')}
+                      onClick={() => onProbe(exit.id)}
+                    >
+                      <IconRefreshOutlineRegular className={styles.glyph} aria-hidden={true} />
+                    </button>
+                    {!exit.pinned && (
+                      <button
+                        type="button"
+                        className={`${styles.button} ${styles.icon} ${styles.iconAccent}`}
+                        disabled={busy}
+                        aria-label={t('exitPin')}
+                        title={t('exitPin')}
+                        onClick={() => onPin(exit.id)}
+                      >
+                        <IconPinOutlineRegular className={styles.glyph} aria-hidden={true} />
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -831,7 +869,7 @@ function validateForm(form: FormState, enabled: boolean): string[] {
   }
 
   /** One bridge action (/probe). */
-  const bridgeAction = async (body: { scope: 'all' | 'refill' } | { scope: 'exit'; exitId: string }): Promise<void> => {
+  const bridgeAction = async (body: { scope: 'all' | 'refill' | 'subscriptions' } | { scope: 'exit'; exitId: string }): Promise<void> => {
     setActionBusy(true)
     try {
       await fetch(`${BRIDGE_PREFIX}/probe`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
@@ -920,6 +958,7 @@ function validateForm(form: FormState, enabled: boolean): string[] {
           disabled={actionBusy || !form.enabled || refilling}
           onClick={() => { void bridgeAction({ scope: 'refill' }) }}
         >
+          <IconRefreshOutlineRegular className={styles.glyph} aria-hidden={true} />
           {refilling ? t('refillRunning') : t('refillNow')}
         </button>
         {refilling && status?.refill?.progress !== undefined && (
@@ -976,14 +1015,22 @@ function validateForm(form: FormState, enabled: boolean): string[] {
             step={1}
             onChange={(value) => { setSaved(false); setForm({ ...form, refreshMs: value }) }}
           />
+          <TextField
+            label={t('subscriptionUserAgent')}
+            hint={t('subscriptionUserAgentHint')}
+            value={form.userAgent}
+            testId="field-subscriptionUserAgent"
+            onChange={(value) => { setSaved(false); setForm({ ...form, userAgent: value }) }}
+          />
           <div className={styles.field}>
             <button
               type="button"
               className={styles.ghostButton}
               data-testid="refresh-subscriptions"
               disabled={actionBusy || !form.enabled}
-              onClick={() => { void bridgeAction({ scope: 'refill' }) }}
+              onClick={() => { void bridgeAction({ scope: 'subscriptions' }) }}
             >
+              <IconRefreshOutlineRegular className={styles.glyph} aria-hidden={true} />
               {t('refillNow')}
             </button>
           </div>
@@ -1044,6 +1091,7 @@ function validateForm(form: FormState, enabled: boolean): string[] {
             disabled={saving}
             onClick={() => { setSaved(false); setForm({ ...form, pinnedExitId: '' }) }}
           >
+            <IconCloseOutlineRegular className={styles.glyph} aria-hidden={true} />
             {t('pinnedUnset')}
           </button>
         )}
@@ -1077,6 +1125,7 @@ function validateForm(form: FormState, enabled: boolean): string[] {
           disabled={actionBusy || !form.enabled}
           onClick={() => { void bridgeAction({ scope: 'all' }) }}
         >
+          <IconRefreshOutlineRegular className={styles.glyph} aria-hidden={true} />
           {probing ? t('probeRunning').replace('{done}', String(probeDone)).replace('{total}', String(probeTotal)) : t('probeAll')}
         </button>
       </div>
@@ -1100,7 +1149,7 @@ function validateForm(form: FormState, enabled: boolean): string[] {
 }
 
 /**
- * The IP 池 page on the Plugins page (`plugins.item`).
+ * The IP Pool page on the Plugins page (`plugins.item`).
  *
  * The Plugins page owns the card chrome and the save control: for
  * `view: 'summary'` this returns the one-liner the page shows under the entry

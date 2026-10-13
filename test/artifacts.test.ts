@@ -87,18 +87,25 @@ describe('the built plugin entry', () => {
 
   builtTest('builds a working exit pool from the shipped bundle', async () => {
     // The pool is minified to a single-letter export, so it is located by the
-    // constructor name on the module rather than by an export key.
+    // constructor name on the module rather than by an export key. Several
+    // chunks share the `admission-` stem (the module and its small
+    // re-export), and which one sorts first changes whenever a hash changes,
+    // so every candidate is imported and the one exporting the class wins.
     const files = await readdir(lib('.'))
-    const poolChunk = files.find((f) => /^admission-.*\.js$/.test(f))
-    assert.ok(poolChunk, 'the bundle should emit a chunk holding the pool')
-    const module = await import(pathToFileURL(join(lib('.'), poolChunk!)).href) as Record<string, unknown>
-    const ExitPool = Object.values(module).find((value) => typeof value === 'function' && value.name === 'ExitPool') as
-      (new (options: object) => {
-        add(node: Record<string, unknown>): boolean
-        snapshot(): { total: number }
-        pick(session: string, model: string): string | null
-      }) | undefined
-    assert.ok(ExitPool, 'the pool class must be exported from its chunk')
+    const poolChunks = files.filter((f) => /^admission-.*\.js$/.test(f))
+    assert.ok(poolChunks.length > 0, 'the bundle should emit a chunk holding the pool')
+    type PoolCtor = new (options: object) => {
+      add(node: Record<string, unknown>): boolean
+      snapshot(): { total: number }
+      pick(session: string, model: string): string | null
+    }
+    let ExitPool: PoolCtor | undefined
+    for (const chunk of poolChunks) {
+      const module = await import(pathToFileURL(join(lib('.'), chunk)).href) as Record<string, unknown>
+      const found = Object.values(module).find((value) => typeof value === 'function' && value.name === 'ExitPool') as PoolCtor | undefined
+      if (found !== undefined) ExitPool = found
+    }
+    assert.ok(ExitPool, 'the pool class must be exported from one of its chunks')
     const pool = new ExitPool({ targetSize: 5 })
     for (let i = 0; i < 5; i += 1) {
       pool.add({ id: `p${i}`, protocol: 'http', source: 'manual', pinned: false, exitIP: '', exitLocation: '', latencyMs: 100, quality: 'S', addedAt: 0 })
