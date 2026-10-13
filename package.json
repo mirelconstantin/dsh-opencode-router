@@ -46,7 +46,7 @@
     "nodejs"
   ],
   "license": "MIT",
-  "author": "Pazalo (https://github.com/pazalo)",
+  "author": "Mirel Constantinescu (https://github.com/mirelconstantin)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mirelconstantin/dsh-opencode-router.git"
