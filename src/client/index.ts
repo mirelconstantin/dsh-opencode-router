@@ -1,6 +1,6 @@
 /**
- * opencode2dsh — browser half. Registers the IP 池 page on the Plugins page
- * (设置 → 插件) through the `plugins.item` slot, which
+ * opencode2dsh — browser half. Registers the IP Pool page on the Plugins page
+ * (Plugins page) through the `plugins.item` slot, which
  * @deepseek-ai/dsh-client-ui-plugin-manager owns, while the Host serves this
  * plugin's entry settings.
  *
@@ -29,6 +29,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: the Plugins page's SlotMap merge (the 'plugins.item' list entry).
 import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import { IpPoolCard } from './IpPoolCard.tsx'
+import { ProxyStatusChip } from './ProxyStatusChip.tsx'
 import type { IpPoolKey } from './locales.ts'
 import { en, zh } from './locales.ts'
 
@@ -37,7 +38,7 @@ export type { IpPoolKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** The IP 池 page copy. */
+    /** The IP Pool page copy. */
     'settings.ip-pool': IpPoolKey
   }
 }
@@ -63,7 +64,7 @@ const ORDER = 20
 export const inject = ['slots', 'locale']
 
 /**
- * Mount the IP 池 page whenever the Host serves this entry's settings.
+ * Mount the IP Pool page whenever the Host serves this entry's settings.
  * @param ctx - the browser plugin context.
  */
 export function apply(ctx: ClientContext): void {
@@ -74,6 +75,21 @@ export function apply(ctx: ClientContext): void {
     spec(name: string): unknown
     register(options: Record<string, unknown>, component: unknown): () => void
   }
+  // The current-proxy chip lives in the composer dock, the bottom bar. It is
+  // registered on the main fiber, NOT under configForms.whileServed: the
+  // settings page only mounts while the Host serves this entry's namespace,
+  // and a readout of "which proxy am I on" is needed exactly when nobody is
+  // on the settings page. Like every other registration it is an effect, so
+  // it dies with the fiber.
+  ctx.effect(
+    () => slots.inject('conversation.composer.dock', () => slots.register({
+      name: 'conversation.composer.dock',
+      id: 'opencode2dsh-proxy',
+      order: 10,
+      locale: NS,
+    }, ProxyStatusChip)),
+    'opencode2dsh: current proxy chip',
+  )
   // Request the version-specific service in its own fiber, so an older host
   // without configForms can still activate this plugin and its provider.
   ctx.inject(['configForms'], (formCtx) => { formCtx.effect(

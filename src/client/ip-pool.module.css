@@ -1,4 +1,4 @@
-/* IP 池 settings page body — the form the Plugins page renders inside its own
+/* IP Pool settings page body — the form the Plugins page renders inside its own
    detail section (token usage copied from dsh-llm-proxy, verified against the
    DSH palette). The page owns the card chrome, title and save control. */
 
@@ -140,50 +140,117 @@
   flex: 1 1 0;
 }
 
-.rowRemove {
+/* -- buttons ------------------------------------------------------------------
+   One button family, matching the ContextMeter's hover surface and radius
+   scale so the card and the composer chip read as the same product. `.icon`
+   is the square variant: an icon-only affordance that still carries an
+   aria-label, so the meaning never lives in the glyph alone. */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   flex: none;
-  padding: 4px 8px;
+  padding: 4px 10px;
   border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-2, #f6f8fa);
-  color: var(--dsw-alias-label-secondary, #4b5563);
+  border-radius: var(--dsw-radius-sm, 8px);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
   font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
   cursor: pointer;
+  transition: background 120ms var(--ds-ease-in-out, ease-in-out),
+    border-color 120ms var(--ds-ease-in-out, ease-in-out),
+    color 120ms var(--ds-ease-in-out, ease-in-out);
 }
 
-.rowRemove:hover {
+.button:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* Square icon-only button. The hit area stays >=24px (WCAG 2.5.8) even
+   though the glyph is 14px, and the glyph never carries the meaning alone:
+   every use keeps an aria-label. */
+.icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: var(--dsw-radius-sm, 8px);
+  border-color: transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.icon:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.iconDanger:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-danger, rgba(236, 19, 19, .05));
+  color: var(--dsw-alias-state-error-primary, #d1242f);
+}
+
+.iconAccent:hover:not(:disabled) {
+  color: var(--dsw-alias-state-business-primary, #4f8cff);
+}
+
+.buttonPrimary {
+  border-color: transparent;
+  background: var(--dsw-alias-state-business-primary, #4f8cff);
+  color: var(--dsw-alias-label-primary-foreground, #fff);
+}
+
+.buttonPrimary:hover:not(:disabled) {
+  background: var(--dsw-alias-state-business-primary-hover, #3d7ae0);
+  color: var(--dsw-alias-label-primary-foreground, #fff);
+}
+
+.glyph {
+  flex: none;
+}
+
+/* A row of icon buttons in a table cell, so they read as a group. */
+.cellActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rowRemove {
+  composes: button;
+  flex: none;
+}
+
+.rowRemove:hover:not(:disabled) {
   border-color: var(--dsw-alias-state-error-primary, #d1242f);
   color: var(--dsw-alias-state-error-primary, #d1242f);
 }
 
 .rowAdd {
+  composes: button;
   align-self: flex-start;
-  padding: 4px 10px;
-  border: 1px dashed var(--dsw-alias-border-l3, #a6adb4);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary, #4b5563);
-  font-size: 12px;
-  cursor: pointer;
+  border-style: dashed;
+  border-color: var(--dsw-alias-border-l3, #a6adb4);
+  color: var(--dsw-alias-label-tertiary);
 }
 
-.rowAdd:hover {
+.rowAdd:hover:not(:disabled) {
   border-color: var(--dsw-alias-state-business-primary, #4f8cff);
   color: var(--dsw-alias-state-business-primary, #4f8cff);
 }
 
 .ghostButton {
-  padding: 6px 12px;
-  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-2, #f6f8fa);
-  color: var(--dsw-alias-label-secondary, #4b5563);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.ghostButton:hover {
-  border-color: var(--dsw-alias-border-l3, #a6adb4);
+  composes: button;
 }
 
 .saveStatus {
@@ -405,4 +472,316 @@
   color: var(--dsw-alias-state-business-primary, #4f8cff);
   font-size: 12px;
   cursor: pointer;
+}
+
+/* -- composer chip + exit picker ------------------------------------------------
+   Mirrors the ContextMeter's trigger/panel pair (ui-conversation
+   skeleton/ContextMeter.module.css) so the two bottom-bar controls read as
+   one row: no border, same hover surface, same radius scale, same menu
+   elevation, and a segmented bar built the same way. */
+
+.chipRoot {
+  display: inline-flex;
+  flex: none;
+}
+
+/* The trigger IS the ContextMeter's `.trigger`: no border, no background
+   until hover, the same radius, the same font metrics, the same hover/open
+   surface. It sits beside the meter in the same dock row, so anything extra
+   made it read as a stranger. Health is carried by the ICON only, because a
+   border here is exactly what the rest of the row does not have. */
+.chipTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 1px 8px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: inherit;
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  font-variant-numeric: tabular-nums;
+  line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chipTrigger:hover,
+.chipTrigger[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.chipIcon {
+  flex: none;
+}
+
+.chipIcon[data-health='ok'] {
+  color: var(--dsw-alias-state-success-primary, #1a7f37);
+}
+
+.chipIcon[data-health='bad'] {
+  color: var(--dsw-alias-state-warn-primary, #9a6700);
+}
+
+.chipPanel {
+  position: fixed;
+  z-index: 1100;
+  box-sizing: border-box;
+  /* An explicit column, so every block child gets its own full-width line
+     whatever the display mode: the health bar, the "Exits" label, the column
+     headings and the rows must never share a line. Declared rather than
+     inherited so a later edit to this rule cannot silently collapse them. */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  /* Wide enough that a country name plus the two value columns fit without the
+     name truncating; the ContextMeter's panel is 264px, but it carries one
+     number and this one carries a label and two. */
+  width: min(300px, calc(100vw - 24px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: 12px;
+  border: 0;
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-specific-menu);
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
+  box-shadow: var(--dsw-elevation-prominent);
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: default;
+}
+
+.chipPanelHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The title, with the health figure pushed right — the same header rhythm the
+   ConversationMeter's `.figures` sets. */
+.chipPanelTitle {
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* Section labels ("Modes", "Exits") so a long list reads as two groups
+   rather than one undifferentiated column. */
+.chipGroupLabel {
+  /* `flex: none` keeps the label from being squeezed by the flexible rows
+     below it once the panel became a flex column. */
+  flex: none;
+  margin: 10px 0 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Column headings, on the SAME grid as the rows below them. A separate flex
+   layout with its own padding is how headings drift out of line with the
+   values they label, so this repeats `.chipRow`'s track list verbatim.
+   `width: 100%` matters inside the column panel: a grid child of a flex
+   column would otherwise shrink to its content instead of spanning the row. */
+.chipColumnHead {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) 4.5ch 4.5ch 12px;
+  align-items: center;
+  column-gap: 8px;
+  width: 100%;
+  flex: none;
+  padding: 0 8px 2px 4px;
+  font-size: 10px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Grid cells, sized in `ch` so the numbers and the ping share one right edge
+   in both the rows and the column headings above them. */
+.chipColumnTokens {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* An unused exit's token cell: right-aligned to match the numbers that will
+   replace it, so the column does not appear to shift when a proxy first
+   carries a request. */
+.chipTokensNone {
+  color: var(--dsw-alias-label-tertiary);
+  opacity: .5;
+}
+
+.chipColumnLatency {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+/* Reserves the tick's slot on every row, so a pinned row does not shift the
+   columns of the rows under it. */
+.chipCheckSlot {
+  width: 12px;
+  justify-self: end;
+}
+
+.chipTokens {
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The prompt-cache share, as a quiet percentage beside the total. */
+.chipCache {
+  color: var(--dsw-alias-state-success-primary, #1a7f37);
+  font-size: 10px;
+}
+
+/* The health figures, right-aligned against the header like the meter's
+   `.figures`, so both panels share a header rhythm. */
+.chipFigures {
+  margin-left: auto;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-primary);
+}
+
+.chipBar {
+  display: flex;
+  gap: 1px;
+  margin: 10px 0 12px;
+  height: 4px;
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--dsw-alias-interactive-bg-hover);
+  overflow: hidden;
+}
+
+.chipSegment {
+  flex: none;
+  min-width: 2px;
+  height: 100%;
+  border-radius: 1px;
+  background: var(--meter-tint, var(--dsw-alias-label-tertiary));
+}
+
+.colorOk {
+  --meter-tint: var(--dsw-alias-state-success-secondary, var(--dsw-static-green-500));
+}
+
+.colorUnknown {
+  --meter-tint: var(--dsw-static-neutral-bluish-400);
+}
+
+.colorDead {
+  --meter-tint: var(--dsw-alias-state-critical, #cf222e);
+}
+
+/* A grid, not a flex row: fixed trailing columns plus a label that takes the
+   rest. Flex let the label grow past its share and push the numbers out of
+   line, so a long country name wrapped to two lines and every column after it
+   drifted. `minmax(0, 1fr)` is what lets the label column actually shrink.
+
+   The trailing tracks are sized to their CONTENT, not to a guess: Tokens is
+   4ch (a "—" or a "1.5M"), Ping 4.5ch (a "182ms"). Keeping them tight lets
+   the country name keep more of the row, which is what the reader actually
+   looks at; the values still share one right edge. */
+.chipRow {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) 4.5ch 4.5ch 12px;
+  align-items: center;
+  column-gap: 8px;
+  width: 100%;
+  padding: 3px 8px 3px 4px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chipRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.chipRow:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #4f8cff);
+  outline-offset: -2px;
+}
+
+/* A grid cell, not a flex item: the name ellipsises onto one line so every row
+   keeps the same height and the columns stay on one grid. The sub-line carries
+   the "uses · when" detail beneath it. */
+.chipRowLabel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chipRowName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipRowSub {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipCheck {
+  flex: none;
+  color: var(--dsw-alias-state-business-primary, #4f8cff);
+}
+
+.chipDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--dsw-static-neutral-bluish-400);
+}
+
+.chipDot[data-state='ok'] {
+  background: var(--dsw-alias-state-success-secondary, var(--dsw-static-green-500));
+}
+
+.chipDot[data-state='dead'] {
+  background: var(--dsw-alias-state-critical, #cf222e);
+}
+
+/* The "no proxy" row is a deliberate choice, not a failed exit, so it gets
+   the neutral dot rather than the error colour. */
+.chipDot[data-state='direct'] {
+  background: var(--dsw-alias-label-tertiary);
+}
+
+/* "Automatic" is the pool choosing, so its dot is the neutral outline: no
+   single exit is named, which is exactly what the row says. */
+.chipDot[data-state='auto'] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l3, #a6adb4);
+}
+
+.chipEmpty {
+  padding: 8px 0;
+  color: var(--dsw-alias-label-tertiary);
 }
