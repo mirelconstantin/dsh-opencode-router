@@ -48,7 +48,7 @@ export interface EchoFacts {
 }
 
 /**
- * Coarse screen (admission steps 1+2, docs/ip-pool.md 4.5 修订): one request
+ * Coarse screen (admission steps 1+2, docs/ip-pool.md 4.5 revision): one request
  * through the candidate to the ip echo. This step touches only the wild
  * candidate and a public IP service — never the anonymous lane — so callers
  * may fan it out at high concurrency (admissionFanout; GoProxy uses 300 for

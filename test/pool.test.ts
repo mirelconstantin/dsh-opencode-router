@@ -12,7 +12,7 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { ExitPool, gradeOf, type ExitNode, type ExitSource } from '../src/pool/pool.ts'
+import { ExitPool, gradeOf, nextUtcMidnight, type ExitNode, type ExitSource } from '../src/pool/pool.ts'
 
 /** A pool whose clock the test drives, so cooldown maths needs no waiting. */
 function makePool(options: { now?: () => number } = {}): { pool: ExitPool; at: (ms: number) => void } {
@@ -163,14 +163,26 @@ describe('two-tier health', () => {
     assert.equal(pool.isUsable('e1', 'm'), true)
   })
 
-  test('repeated 429s back off exponentially up to the ceiling', () => {
+  test('repeated 429s never shorten the daily cooldown', () => {
+    // The exponential ladder is now only a FLOOR under the real reset, so a
+    // second 429 inside the same day cannot pull the deadline earlier.
+    const start = Date.UTC(2026, 0, 1, 12, 0, 0)
     const { pool, at } = makePool()
+    at(start)
     pool.add(exit('e1'))
-    at(1_000_000)
     const first = pool.markLimited('e1')
-    at(1_000_000)
+    at(start + 1000)
     const second = pool.markLimited('e1')
-    assert.ok(second - 1_000_000 > first - 1_000_000, 'the second backoff should be longer')
+    assert.ok(second >= first, 'a repeat 429 must not shorten the wait')
+    assert.equal(second, first, 'the same UTC day yields the same deadline')
+    // The 60s backoff floor applies near the day boundary, where the reset
+    // is only 500ms away: waiting the extra 59.5s is correct (it avoids a
+    // re-probe against an upstream that has not reset yet).
+    const near = makePool()
+    near.at(86_400_000 - 500)
+    near.pool.add(exit('e2'))
+    const until = near.pool.markLimited('e2')
+    assert.equal(until, 86_400_000 - 500 + 60_000, 'the 60s ladder floor wins near midnight')
   })
 
   test('a model-level ban never cools the exit for other models', () => {
@@ -402,5 +414,171 @@ describe('bulk behaviour', () => {
     assert.equal(rows.length, 2)
     assert.equal(rows.find((row) => row.id === 'e1')?.bans.length, 1)
     assert.equal(rows.find((row) => row.id === 'e2')?.bans.length, 1)
+  })
+
+  test('token tallies accumulate per exit, split by kind', () => {
+    // The picker's Tokens column answers "what did this proxy cost me", and
+    // cacheRead is kept separate because a cached prefix is billed far below
+    // a fresh one — folding it into `input` would hide the number that says
+    // whether the proxy is carrying a long conversation cheaply.
+    const pool = new ExitPool()
+    pool.add(exit('e1'))
+    assert.equal(pool.usageOf('e1'), null)
+
+    pool.recordRouted('e1', 1_000)
+    pool.recordTokens('e1', { input: 1_000, output: 200, cacheRead: 300, cacheWrite: 50, requests: 1 })
+    pool.recordRouted('e1', 2_000)
+    pool.recordTokens('e1', { input: 500, output: 100, cacheRead: 700, cacheWrite: 0, requests: 1 })
+
+    const usage = pool.usageOf('e1')!
+    assert.deepEqual(usage.tokens, {
+      input: 1_500,
+      output: 300,
+      cacheRead: 1_000,
+      cacheWrite: 50,
+      requests: 2,
+    })
+    assert.equal(usage.uses, 2, 'each dispatch counted once, each billing folded in')
+  })
+
+  test('a token tally for an exit that never routed is ignored', () => {
+    // recordTokens must not conjure a usage row: `firstUsedAt` would be 0 and
+    // the tally would disagree with the use count beside it.
+    const pool = new ExitPool()
+    pool.add(exit('e1'))
+    pool.recordTokens('e1', { input: 100, output: 0, cacheRead: 0, cacheWrite: 0, requests: 1 })
+    assert.equal(pool.usageOf('e1'), null)
+  })
+
+  test('a token tally is a copy, not a handle on the pool state', () => {
+    const pool = new ExitPool()
+    pool.add(exit('e1'))
+    pool.recordRouted('e1', 1_000)
+    pool.recordTokens('e1', { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, requests: 1 })
+    const first = pool.usageOf('e1')!
+    first.tokens!.input = 999_999
+    assert.equal(pool.usageOf('e1')?.tokens?.input, 10, 'a caller cannot corrupt the tally')
+  })
+
+  test('usage tallies ride the same edge as the readout', () => {
+    // The GUI's picker shows "3 uses · 2m ago" per exit, so the counters must
+    // count the requests that actually routed, not the ones pick() considered.
+    const pool = new ExitPool()
+    pool.add(exit('e1'))
+    pool.add(exit('e2'))
+    assert.equal(pool.usageOf('e1'), null, 'an unused exit has no usage row')
+
+    pool.recordRouted('e1', 1_000)
+    const one = pool.usageOf('e1')!
+    assert.equal(one.uses, 1)
+    assert.equal(one.lastUsedAt, 1_000)
+    assert.equal(one.firstUsedAt, 1_000)
+    assert.equal(one.tokens, undefined, 'a dispatch with no finished usage bills nothing yet')
+
+    pool.recordRouted('e1', 5_000)
+    const two = pool.usageOf('e1')!
+    assert.equal(two.uses, 2)
+    assert.equal(two.lastUsedAt, 5_000)
+    assert.equal(two.firstUsedAt, 1_000, 'firstUsedAt stays the first dispatch')
+    assert.equal(pool.usageOf('e2'), null, 'an exit nobody routed through stays unused')
+
+    // The copy handed out is a copy: a caller cannot corrupt the tally.
+    const copy = pool.usageOf('e1')!
+    copy.uses = 999
+    assert.equal(pool.usageOf('e1')?.uses, 2)
+  })
+
+  test('a 429 cools the exit until the daily bucket resets', () => {
+    // Zen meters the free lane per-IP per-UTC-day and its retry-after is the
+    // seconds to the next UTC midnight. The old ladder guessed 1m→2m→4m and
+    // would re-probe an exhausted exit ~28 times inside a window where the
+    // upstream can only refuse again.
+    const start = Date.UTC(2026, 0, 1, 12, 0, 0) // noon, 12h from midnight
+    const { pool, at } = makePool()
+    at(start)
+    pool.add(exit('e1'))
+    pool.markOk('e1')
+
+    const until = pool.markLimited('e1')
+    assert.equal(until, start + 12 * 3_600_000, 'cools until midnight UTC, not 1 minute')
+
+    // Well past the old 30-minute cap: the exit must still be unusable.
+    at(start + 40 * 60_000)
+    assert.equal(pool.isUsable('e1', 'm'), false)
+
+    // One second after the reset it comes back.
+    at(until + 1)
+    assert.equal(pool.isUsable('e1', 'm'), true)
+  })
+
+  test('an upstream retry-after wins over the local backoff', () => {
+    // The gateway states the real deadline; a longer one must be believed.
+    const start = Date.UTC(2026, 0, 1, 23, 0, 0) // 1h from midnight
+    const { pool, at } = makePool()
+    at(start)
+    pool.add(exit('e1'))
+    pool.markOk('e1')
+
+    // Upstream says 3h, far longer than the local guess (1h to midnight).
+    const until = pool.markLimited('e1', 3 * 3_600_000)
+    assert.equal(until, start + 3 * 3_600_000, 'the upstream deadline is used verbatim')
+    at(until + 1)
+    assert.equal(pool.isUsable('e1', 'm'), true)
+  })
+
+  test('nextUtcMidnight floors at 1s', () => {
+    // A call in the last millisecond of the day would otherwise produce a
+    // zero wait and immediately re-probe an exhausted exit.
+    const DAY = 86_400_000
+    assert.equal(nextUtcMidnight(0), DAY)
+    assert.equal(nextUtcMidnight(DAY / 2), DAY / 2)
+    assert.equal(nextUtcMidnight(DAY - 1), 1000)
+    assert.equal(nextUtcMidnight(DAY), DAY)
+  })
+
+  test('bypass routes nothing, and outranks a pinned exit', () => {
+    // "No proxy" is the user saying stop routing, so it must win over every
+    // preference pick() has — including a pin left over from earlier.
+    const { pool } = makePool()
+    pool.add(exit('e1'))
+    pool.add(exit('e2'))
+    pool.markOk('e1')
+    pool.markOk('e2')
+
+    assert.equal(pool.bypass, false, 'routing is on by default')
+    assert.notEqual(pool.pick('s1', 'm'), null)
+
+    pool.setBypass(true)
+    assert.equal(pool.bypass, true)
+    assert.equal(pool.pick('s1', 'm'), null, 'bypass sends every request direct')
+
+    // A pin must not resurrect routing while bypass is on.
+    pool.pin('e1')
+    assert.equal(pool.pick('s1', 'm'), null, 'a pin does not override bypass')
+
+    pool.setBypass(false)
+    assert.equal(pool.pick('s1', 'm'), 'e1', 'clearing bypass restores the pin')
+  })
+
+  test('the current-proxy readout tracks the last routed exit', () => {
+    // The GUI reads this, so it must survive the case pick() cannot report:
+    // a pinned exit returns before the sticky write, and a rotation leaves
+    // the previous session binding behind.
+    const pool = new ExitPool()
+    assert.equal(pool.lastRoutedExit(), null)
+
+    pool.add(exit('e1'))
+    pool.add(exit('e2'))
+    pool.recordRouted('e1', 100)
+    assert.deepEqual(pool.lastRoutedExit(), { exitId: 'e1', at: 100 })
+
+    // A pinned exit still answers, because the dispatcher records it.
+    pool.pin('e2')
+    pool.recordRouted('e2', 200)
+    assert.deepEqual(pool.lastRoutedExit(), { exitId: 'e2', at: 200 })
+
+    // A later dispatch wins, so a rotation is reflected rather than lagged.
+    pool.recordRouted('e1', 300)
+    assert.deepEqual(pool.lastRoutedExit(), { exitId: 'e1', at: 300 })
   })
 })

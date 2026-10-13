@@ -32,6 +32,12 @@ export interface RefillOptions {
   intervalMs?: number
   /** Admission batch cap per refill round (defensive; quota already bounds). */
   maxAdmissionsPerRound?: number
+  /**
+   * Replenish down to this many USABLE exits, not just past the emergency
+   * line. Off by leaving it undefined, which restores the old behaviour: top
+   * up only when the pool is warning/critical/emergency.
+   */
+  maintainUsable?: number
   now?: () => number
 }
 
@@ -66,11 +72,13 @@ export class RefillScheduler {
   /** Candidate cap per source per round (a source can return thousands of
    *  rows; admission cost is 4 requests per candidate). */
   #maxPerRound: number
+  /** Usable-exit floor to maintain, or null for emergency-only refills. */
+  #maintainUsable: number | null
   #timer: NodeJS.Timeout | null = null
   #running = false
   #stopped = false
   #lastRound = { admitted: 0, rejected: 0, fetched: 0, coarsePassed: 0, state: 'healthy' as string, at: 0 }
-  /** Live progress of the in-flight round (settings page 立即补充 feedback). */
+  /** Live progress of the in-flight round (settings page refill feedback). */
   #progress: { running: boolean; stage: 'fetch' | 'coarse' | 'admit' | 'idle'; sourcesDone: number; sourcesTotal: number; fetched: number; candidates: number; coarsePassed: number; coarseDone: number; admissions: number; admitted: number } = {
     running: false, stage: 'idle', sourcesDone: 0, sourcesTotal: 0, fetched: 0, candidates: 0, coarsePassed: 0, coarseDone: 0, admissions: 0, admitted: 0,
   }
@@ -84,6 +92,7 @@ export class RefillScheduler {
     this.#deps = deps
     this.#intervalMs = options.intervalMs ?? 10 * 60_000
     this.#maxPerRound = options.maxAdmissionsPerRound ?? 10
+    this.#maintainUsable = options.maintainUsable ?? null
   }
 
   /** Register a callback fired after every node the round really admits. */
@@ -141,7 +150,14 @@ export class RefillScheduler {
     const state = this.#pool.state()
     const quota = Math.min(this.#pool.admissionQuota(), this.#maxPerRound)
     this.#lastRound = { ...this.#lastRound, state, at: Date.now() }
-    if (state === 'healthy' || quota <= 0) {
+    // With a maintenance floor set, "healthy but thin" is still a reason to
+    // work: a free proxy dies within the hour, so a pool that is comfortably
+    // healthy on the strength of this morning's admits is stale by evening.
+    // The old rule topped up only at warning and below, which is why the list
+    // looked fresh at boot and empty later.
+    const usable = this.#pool.availableFreeCount()
+    const below = this.#maintainUsable !== null && usable < this.#maintainUsable
+    if ((state === 'healthy' && !below) || quota <= 0) {
       this.#progress = { running: false, stage: 'idle', sourcesDone: 0, sourcesTotal: 0, fetched: 0, candidates: 0, coarsePassed: 0, coarseDone: 0, admissions: 0, admitted: 0 }
       return
     }
@@ -153,7 +169,7 @@ export class RefillScheduler {
     let fetched = 0
     let admitted = 0
     let rejected = 0
-    // Full-scan policy (docs §4.5: "一轮 48k 候选…300 并发几分钟扫完全量"):
+    // Full-scan policy (docs §4.5: "one round of 48k candidates, 300 concurrent, sweeping the whole set in minutes"):
     // the coarse screen is brute-force by design — wild candidates are free,
     // have no account system, and 98%+ die at the TCP step, so skipping rows
     // only loses exits. The caps below are defensive against pathological
@@ -201,7 +217,7 @@ export class RefillScheduler {
       }
     }
 
-    // Coarse screen (docs 4.5 分层修订): steps 1-2 touch only the wild
+    // Coarse screen (docs 4.5 layered revision): steps 1-2 touch only the wild
     // candidates and a public IP service, so they fan out hot
     // (admissionFanout, default 300 — GoProxy ValidateConcurrency parity)
     // of thousands of candidates. Survivors (~1-3%) proceed to the

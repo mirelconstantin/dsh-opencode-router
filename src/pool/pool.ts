@@ -81,6 +81,48 @@ export function gradeOf(latencyMs: number): ExitNode['quality'] {
 const banKey = (exitId: string, model: string) => `${exitId}\u0000${model}`
 
 /**
+ * One request's token bill, split the way the provider reports it.
+ *
+ * `cacheRead` is prompt-cache reuse, kept apart from `input` on purpose: a
+ * cached prefix is billed far below a fresh one, so folding the two together
+ * would hide exactly the number that says whether a proxy is carrying a heavy
+ * conversation cheaply or expensively.
+ */
+export interface ExitTokenUsage {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  /** How many finished requests contributed to these totals. */
+  requests: number
+}
+
+/** What one exit has carried in this process. */
+export interface ExitUsage {
+  /** Dispatches attempted through the exit (a mid-flight death still counts). */
+  uses: number
+  lastUsedAt: number
+  firstUsedAt: number
+  /** Absent until a request finishes; a dispatch that dies bills nothing. */
+  tokens?: ExitTokenUsage
+}
+
+/**
+ * Milliseconds from `now` to the next UTC midnight.
+ *
+ * Zen's free lane meters per-IP per-UTC-day, and its `retry-after` is the
+ * seconds to the next UTC midnight (upstream: `getRetryAfterDay`). The local
+ * clock only has to agree on the UTC day boundary, which `Date` gives for
+ * free, so this needs no timezone maths of its own. Mirrors the upstream
+ * formula `86_400_000 - (now % 86_400_000)`, floored at 1s so a call made
+ * within the last millisecond of a day does not produce a zero wait that
+ * would immediately re-probe an exhausted exit.
+ */
+export function nextUtcMidnight(now: number): number {
+  return Math.max(1000, 86_400_000 - (now % 86_400_000))
+}
+
+/**
  * Per-exit ban index: the models banned or suspected for one exit, kept
  * beside the node so `remove()` and `#isAvailable()` never scan the whole
  * ban table. `#bans` stays the source of truth for the (exit, model)
@@ -109,7 +151,7 @@ export class ExitPool {
    */
   readonly #usableCache = new Map<string, { at: number; ids: string[] }>()
   readonly #sessionExit = new Map<string, string>()
-  /** Passive-signal counters per exit (docs/ip-pool.md §4.3 被动 + IP-6 stats). */
+  /** Passive-signal counters per exit (docs/ip-pool.md §4.3 passive + IP-6 stats). */
   readonly #passive = new Map<string, { ok: number; limited: number; refused: number; dead: number; transport: number }>()
   #targetSize: number
   #cooldownBase: number
@@ -121,7 +163,10 @@ export class ExitPool {
   constructor(options: PoolOptions = {}) {
     this.#targetSize = options.targetSize ?? 20
     this.#cooldownBase = options.limitedCooldownBaseMs ?? 60_000
-    this.#cooldownMax = options.limitedCooldownMaxMs ?? 30 * 60_000
+    // A day, not 30 minutes: the upstream free bucket is per-IP per-UTC-day
+    // and only clears at midnight, so a shorter ceiling only invited the
+    // re-probes this ladder exists to avoid.
+    this.#cooldownMax = options.limitedCooldownMaxMs ?? 86_400_000
     this.#banConfirmations = options.modelBanConfirmations ?? 2
     this.#deadEvictions = options.deadEvictions ?? 2
     this.#now = options.now ?? Date.now
@@ -247,6 +292,28 @@ export class ExitPool {
     this.pinnedId = ''
   }
 
+  /**
+   * When set, the pool routes nothing and every `pick()` returns null, so
+   * requests go out direct.
+   *
+   * This is the GUI's "no proxy" choice and is deliberately NOT the same as
+   * clearing the pin: unpinned means "choose for me", which still routes.
+   * It is also not `enabled: false`, which is a settings change that tears
+   * the dispatcher down; bypass leaves the pool intact and simply declines
+   * to route, so it can be toggled mid-conversation.
+   */
+  #bypass = false
+
+  /** Route nothing until cleared. */
+  setBypass(on: boolean): void {
+    this.#bypass = on
+  }
+
+  /** Whether routing is currently declined (the "no proxy" choice). */
+  get bypass(): boolean {
+    return this.#bypass
+  }
+
   // -- probe locking (4.1: serial per exit) -----------------------------------
 
   /** Try to take the exit's serial-probe slot; false when already taken. */
@@ -279,21 +346,39 @@ export class ExitPool {
     this.#invalidateUsable()
   }
 
-  /** 429: exit-level cooldown with exponential backoff (3.2 / 4.6). */
-  markLimited(id: string): number {
+  /**
+   * 429: exit-level cooldown, by default until the upstream DAILY bucket
+   * resets.
+   *
+   * Zen's free lane is rate limited per-IP per-UTC-day, and the upstream
+   * `retry-after` is computed as the seconds to the next UTC midnight — not a
+   * rolling window from the first request. The old exponential ladder
+   * (1m→2m→4m, capped at 30m) therefore guessed: it retried an exhausted exit
+   * up to 28 times inside a window where the upstream can only refuse again,
+   * burning requests and rotation. The default is now the real reset instant,
+   * and the ladder is kept only as a floor for the case where a proxy answers
+   * 429 before the day's quota is actually gone.
+   *
+   * `retryAfterMs` is the upstream's own answer when one was received; the
+   * UTC-midnight reset is used when it was not.
+   */
+  markLimited(id: string, retryAfterMs?: number): number {
     const health = this.#health.get(id)
     if (!health) return 0
     health.consecutiveLimited += 1
     health.state = 'ok'
-    const backoff = Math.min(
+    const floor = Math.min(
       this.#cooldownBase * 2 ** (health.consecutiveLimited - 1),
       this.#cooldownMax,
     )
-    health.cooldownUntil = this.#now() + backoff
+    const untilUtcReset = nextUtcMidnight(this.#now())
+    // Never shorter than the backoff floor: a 429 with no reset hint is a
+    // weaker signal than one that carries the upstream's own deadline.
+    const wait = Math.max(floor, retryAfterMs ?? untilUtcReset)
+    health.cooldownUntil = this.#now() + wait
     this.#invalidateUsable()
     return health.cooldownUntil
   }
-
   /** Deterministic refusal (upstream RegionError: region blocks are a
    *  property of the exit, not transient noise) — ban the pairing at once. */
   markModelBanned(id: string, model: string): void {
@@ -346,11 +431,11 @@ export class ExitPool {
 
   /**
    * Passive signal from a REAL request outcome (docs/ip-pool.md §4.2 rule
-   * table, §4.3 被动 row): one response header read at the routing layer,
+   * table, §4.3 passive row): one response header read at the routing layer,
    * applied to the two-tier health exactly like a probe would. Returns the
    * classification for diagnostics.
    */
-  recordPassive(id: string, statusCode: number, model: string, regionBlocked = false): 'ok' | 'limited' | 'refused' | 'dead' {
+  recordPassive(id: string, statusCode: number, model: string, regionBlocked = false, retryAfterMs?: number): 'ok' | 'limited' | 'refused' | 'dead' {
     if (!this.#nodes.has(id)) return 'ok'
     if (statusCode >= 200 && statusCode < 300) {
       this.markOk(id, model)
@@ -358,7 +443,7 @@ export class ExitPool {
       return 'ok'
     }
     if (statusCode === 429) {
-      this.markLimited(id)
+      this.markLimited(id, retryAfterMs)
       this.#countPassive(id, 'limited')
       return 'limited'
     }
@@ -400,6 +485,76 @@ export class ExitPool {
     return this.#sessionExit.get(session) ?? null
   }
 
+  /**
+   * The exit the most recent request was routed through, with the time.
+   * `pick()` only records the choice, and a pinned exit returns before the
+   * sticky write at all, so neither answers "which proxy am I on now" —
+   * the dispatcher records the exit that actually carried each dispatch
+   * here, which is what the GUI's current-proxy chip reads.
+   */
+  #lastRouted: { exitId: string; at: number } | null = null
+
+  /** Record the exit one real request was dispatched through. */
+  recordRouted(exitId: string, at: number): void {
+    this.#lastRouted = { exitId, at }
+    // Usage tallies ride the same edge as the readout, so they need no extra
+    // hook: every request that updates the chip also updates these counts.
+    const usage = this.#usage.get(exitId) ?? { uses: 0, lastUsedAt: 0, firstUsedAt: at }
+    usage.uses += 1
+    usage.lastUsedAt = at
+    this.#usage.set(exitId, usage)
+  }
+
+  /**
+   * Add one request's token bill to an exit.
+   *
+   * Split the way the provider reports it, because the three columns answer
+   * different questions: `input` is what a turn costs to send, `output` what it
+   * costs to receive, and `cacheRead` is prompt-cache reuse — the part that
+   * makes a long conversation cheap and is the number worth watching when
+   * deciding whether a proxy is carrying a heavy session.
+   *
+   * Kept separate from `recordRouted` because the token total only exists once
+   * the stream finishes: a dispatch that dies mid-flight still counts as a
+   * use, but bills nothing.
+   */
+  recordTokens(exitId: string, tokens: ExitTokenUsage): void {
+    // Only bill a request `recordRouted` already counted. Creating the row
+    // here would give `firstUsedAt` 0 and make the tally disagree with the
+    // use count it is supposed to sit beside.
+    const usage = this.#usage.get(exitId)
+    if (usage === undefined) return
+    usage.tokens ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, requests: 0 }
+    usage.tokens.input += tokens.input
+    usage.tokens.output += tokens.output
+    usage.tokens.cacheRead += tokens.cacheRead
+    usage.tokens.cacheWrite += tokens.cacheWrite
+    usage.tokens.requests += 1
+    this.#usage.set(exitId, usage)
+  }
+
+  /**
+   * Per-exit usage, for the GUI's picker: how often each exit carried a
+   * request, when it was last used, and what that traffic cost in tokens.
+   * Counters live in memory only — they describe this process's routing, not a
+   * durable billing record.
+   */
+  #usage = new Map<string, ExitUsage>()
+
+  /** Usage for one exit, or null when it has never carried a request. */
+  usageOf(exitId: string): ExitUsage | null {
+    const found = this.#usage.get(exitId)
+    if (found === undefined) return null
+    // Deep-copied: a caller summing the columns must not be able to write back
+    // into the pool's own tally.
+    return { ...found, tokens: found.tokens === undefined ? undefined : { ...found.tokens } }
+  }
+
+  /** The exit the last request used, or null when nothing has routed yet. */
+  lastRoutedExit(): { exitId: string; at: number } | null {
+    return this.#lastRouted
+  }
+
   #countPassive(id: string, kind: 'ok' | 'limited' | 'refused' | 'dead' | 'transport'): void {
     const bucket = this.#passive.get(id) ?? { ok: 0, limited: 0, refused: 0, dead: 0, transport: 0 }
     if (kind === 'limited') bucket.limited += 1
@@ -439,6 +594,11 @@ export class ExitPool {
    * every mutation instead of being rebuilt per request.
    */
   pick(session: string, model: string): string | null {
+    // The user's explicit "no proxy" wins over every preference below,
+    // including a pinned exit: choosing direct must not be overridden by a
+    // pin left over from earlier.
+    if (this.#bypass) return null
+
     if (this.pinnedId !== '' && this.isUsable(this.pinnedId, model)) return this.pinnedId
 
     const last = this.#sessionExit.get(session)

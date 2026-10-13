@@ -100,6 +100,25 @@ export function exitProxyUri(exitId: string, protocol: 'http' | 'socks5'): strin
 }
 
 /**
+ * The upstream's own cooldown, in milliseconds, from a `retry-after` header.
+ *
+ * Zen answers a free-lane 429 with `retry-after` in seconds, set to the time
+ * until the next UTC midnight. Only the delta-seconds form is honoured: the
+ * HTTP-date form would need the server clock, which is not available here and
+ * not worth trusting against a one-line arithmetic difference. Returns
+ * undefined for anything else so the pool keeps its own computation.
+ */
+function retryAfterMs(headers: unknown): number | undefined {
+  const bag = headers as { get?: (name: string) => string | null | undefined } | undefined
+  if (bag === undefined || typeof bag.get !== 'function') return undefined
+  const raw = bag.get('retry-after')
+  if (raw === null || raw === undefined) return undefined
+  const seconds = Number.parseInt(raw, 10)
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined
+  return seconds * 1000
+}
+
+/**
  * The undici Dispatcher surface `fetch` actually calls (the subset
  * dsh-llm-proxy's RoutingDispatcher implements — full `Dispatcher` carries
  * 20+ stream helpers we never hit through fetch).
@@ -218,12 +237,17 @@ export class PoolRoutingDispatcher implements RoutingDispatcherSurface {
     if (!agent) {
       return this.#direct.dispatch(options, handler)
     }
+    // The exit this request actually goes through, for the GUI's
+    // current-proxy readout. `pick()` alone cannot answer it: a pinned exit
+    // returns before the sticky write, and the sticky exit lags one
+    // dispatch behind a rotation.
+    this.#pool.recordRouted(exitId, Date.now())
     return agent.dispatch(options, this.#observe(exitId, model, session, handler))
   }
 
   /**
    * Wrap the downstream handler with the passive-signal observer
-   * (docs/ip-pool.md §4.2 rule table, §4.3 被动): the real request's own
+   * (docs/ip-pool.md §4.2 rule table, §4.3 passive): the real request's own
    * outcome feeds the two-tier health — free liveness data no probe spends
    * quota on. Body bytes stream through untouched; only the response start
    * line and terminal transport errors are read.
@@ -253,10 +277,14 @@ export class PoolRoutingDispatcher implements RoutingDispatcherSurface {
       if (typeof fn === 'function') (fn as (...a: unknown[]) => void).apply(handler, args)
     }
     let classified = false
-    const classify = (statusCode: number): void => {
+    const classify = (statusCode: number, headers?: unknown): void => {
       if (classified) return
       classified = true
-      const verdict = pool.recordPassive(exitId, statusCode, model)
+      // Zen's free lane is per-IP per-UTC-day and sends `retry-after` as the
+      // seconds to the next UTC midnight, so the upstream states the real
+      // deadline. Reading it beats the local backoff guess; when it is absent
+      // or unparseable the pool falls back to computing the reset itself.
+      const verdict = pool.recordPassive(exitId, statusCode, model, false, retryAfterMs(headers))
       // A degraded sticky exit must not keep the session pinned to it.
       if (verdict !== 'ok') pool.rerouteSession(session)
     }
@@ -325,7 +353,7 @@ export class PoolRoutingDispatcher implements RoutingDispatcherSurface {
       onResponseStart: (controller, statusCode, headers, statusMessage) => {
         liveController = controller
         disarm()
-        classify(statusCode)
+        classify(statusCode, headers)
         forward('onResponseStart', [controller, statusCode, headers, statusMessage])
       },
       onResponseData: (controller, chunk) => {

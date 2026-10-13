@@ -24,7 +24,7 @@ import { Prober } from './pool/prober.ts'
 import { RefillScheduler } from './pool/refill.ts'
 import { SubscriptionFetcher } from './pool/subscription-fetcher.ts'
 import { SingBoxSupervisor } from './pool/singbox.ts'
-import { createRotateDelegate, setRotateDelegate } from './pool/rotate.ts'
+import { createRotateDelegate, setRotateDelegate, setUsageSink } from './pool/rotate.ts'
 
 /** Data dir shared with the catalog cache (config.ts convention). */
 function dataDir(): string {
@@ -119,10 +119,22 @@ export interface IpPoolRuntime {
   probeExit(exitId: string): Promise<number>
   /** One manual refill round (bridge /probe scope 'refill'). */
   refillNow(): Promise<void>
-  /** One subscription refresh round (bridge 立即刷新, docs §5.2). */
+  /** One subscription refresh round (bridge refresh, docs §5.2). */
   refreshSubscriptions(): Promise<void>
+  /** Pin one exit, or clear the pin when `exitId` is empty (bridge /pin,
+   *  which the composer dock's exit picker calls). */
+  pinExit(exitId: string): Promise<boolean>
+  /** The picker's three choices: let the pool choose, route nothing at all,
+   *  or force one exit. Returns false when the named exit is unknown. */
+  setRouting(choice: RoutingChoice): Promise<boolean>
   dispose(): Promise<void>
 }
+
+/** What the exit picker can ask the pool to do. */
+export type RoutingChoice =
+  | { mode: 'auto' }
+  | { mode: 'direct' }
+  | { mode: 'exit'; exitId: string }
 
 /**
  * Assemble the routing stack. Returns null (with a logged reason) when the
@@ -214,7 +226,14 @@ export async function startIpPool(
     // Free loop on/off + restart on target change (interval fixed 10min).
     const wantRefill = (current.free?.enabled ?? true) && current.enabled !== false
     if (wantRefill && refill === null) {
-      refill = new RefillScheduler(pool, { ...admissionDeps, prober })
+      // `maintainUsable` keeps the free list topped up on a schedule rather
+      // than only in an emergency: a free proxy is typically dead within the
+      // hour, so a pool that is merely "healthy" on this morning's admits is
+      // stale by this evening. Half the target as the floor balances churn
+      // against admission cost.
+      refill = new RefillScheduler(pool, { ...admissionDeps, prober }, {
+        maintainUsable: Math.ceil((current.free?.targetSize ?? 20) / 2),
+      })
       // Auto-install when the first refill lands exits (live-observed
       // 2026-09-09): the free-source pool starts EMPTY, so the initial
       // install() below stays deferred ("no exits configured") and nothing
@@ -237,10 +256,21 @@ export async function startIpPool(
 
     // Subscription layer: (re)create on URL change, keep the fetcher across
     // refresh-interval edits.
-    const urls = current.subscriptions ?? []
+    //
+    // Turning the pool off, or clearing the URLs, must TEAR DOWN a fetcher
+    // that is already running — otherwise it keeps polling airports (and
+    // keeps sing-box converting) for a configuration that is now switched off.
+    const urls = current.subscription?.urls ?? []
+    if (urls.length === 0 || current.enabled === false) {
+      subscriptions?.stop()
+      subscriptions = null
+      fetcherActive = false
+      return
+    }
     const fetcher = ensureSubscriptions(urls)
     if (fetcher !== null) {
       fetcher.setIntervalMs(current.subscription?.refreshMs ?? 30 * 60_000)
+      fetcher.setUserAgent(current.subscription?.userAgent)
       if (fetcher === subscriptions && !fetcherActive) {
         fetcher.start()
         fetcherActive = true
@@ -337,6 +367,9 @@ export async function startIpPool(
   // restart a pre-content stream on a fresh exit instead of surfacing the
   // intermediate error to the host's retry budget.
   setRotateDelegate(createRotateDelegate(pool, { maxAttempts: config.ipPool?.maxRotateAttempts ?? 3 }))
+  // The adapter bills each finished request's tokens to whichever exit
+  // carried it, which is what the GUI's per-proxy cost column reads.
+  setUsageSink(pool)
 
   return {
     pool,
@@ -378,8 +411,32 @@ export async function startIpPool(
     async refreshSubscriptions() {
       await subscriptions?.refreshNow()
     },
+    async pinExit(exitId) {
+      if (exitId === '') {
+        pool.unpin()
+        return true
+      }
+      return pool.pin(exitId)
+    },
+    async setRouting(choice) {
+      // Every choice clears the other two first, so the three states stay
+      // mutually exclusive: a leftover pin must not survive "direct", and a
+      // leftover bypass must not survive "auto".
+      if (choice.mode === 'direct') {
+        pool.unpin()
+        pool.setBypass(true)
+        return true
+      }
+      pool.setBypass(false)
+      if (choice.mode === 'auto') {
+        pool.unpin()
+        return true
+      }
+      return pool.pin(choice.exitId)
+    },
     async dispose() {
       setRotateDelegate(null)
+      setUsageSink(null)
       subscriptions?.stop()
       refill?.stop()
       installer.dispose()

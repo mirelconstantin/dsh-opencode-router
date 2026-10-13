@@ -16,6 +16,7 @@ import { ExitPool, type ExitNode } from './pool.ts'
 import { Prober, type ProbeTask } from './prober.ts'
 import { admitCandidate, admitTrusted, type AdmissionDeps } from './admission.ts'
 import { parseSubscription, type ParsedNode } from './subscription.ts'
+import { DEFAULT_SUBSCRIPTION_USER_AGENT, normalizeSubscriptionUserAgent } from './subscription-defaults.ts'
 import { SingBoxSupervisor, type ConvertedExit } from './singbox.ts'
 
 export interface SubscriptionDeps extends AdmissionDeps {
@@ -46,6 +47,8 @@ export interface SubscriptionOptions {
   intervalMs?: number
   timeoutMs?: number
   logger?: { info(message: string): void; warn(message: string): void }
+  /** Operator-set fetch UA; blank or absent uses the built-in default. */
+  userAgent?: string
 }
 
 export class SubscriptionFetcher {
@@ -64,12 +67,14 @@ export class SubscriptionFetcher {
   #intervalMs: number
   #timeoutMs: number
   #logger?: SubscriptionOptions['logger']
+  #userAgent: string
 
   constructor(deps: SubscriptionDeps, options: SubscriptionOptions = {}) {
     this.#deps = deps
     this.#intervalMs = options.intervalMs ?? 30 * 60_000
     this.#timeoutMs = options.timeoutMs ?? 30_000
     this.#logger = options.logger
+    this.#userAgent = normalizeSubscriptionUserAgent(options.userAgent)
   }
 
   get state(): SubscriptionState {
@@ -86,9 +91,14 @@ export class SubscriptionFetcher {
     this.#urls = urls.filter((url) => url.trim().length > 0)
   }
 
+  /** Live re-apply of the fetch UA (settings page). Blank falls back to the
+   *  default, so a cleared field never sends an empty User-Agent. */
+  setUserAgent(userAgent: string | undefined): void {
+    this.#userAgent = normalizeSubscriptionUserAgent(userAgent)
+  }
+
   /** Live re-apply of the refresh interval (settings page, docs §5.1). */
-  setIntervalMs(ms: number): void {
-    this.#intervalMs = Math.max(60_000, ms)
+  setIntervalMs(ms: number): void {    this.#intervalMs = Math.max(60_000, ms)
     if (this.#timer !== null) {
       clearInterval(this.#timer)
       this.#timer = setInterval(() => void this.refresh(), this.#intervalMs)
@@ -96,7 +106,7 @@ export class SubscriptionFetcher {
     }
   }
 
-  /** Manual refresh trigger (settings page 立即刷新, docs §5.3 /probe scope: 'refill' parity). */
+  /** Manual refresh trigger (settings page refresh, docs §5.3 /probe scope: 'refill' parity). */
   async refreshNow(): Promise<SubscriptionState> {
     return this.refresh()
   }
@@ -222,7 +232,9 @@ export class SubscriptionFetcher {
     try {
       const response = await (this.#deps.fetchImpl ?? fetch)(url, {
         signal: controller.signal,
-        headers: { accept: '*/*', 'user-agent': 'clash-verge/1.6.0' },
+        // The airport allow-listed spelling, not 1.6.0, which a real airport
+        // answers 502 for. See subscription-defaults.ts.
+        headers: { accept: '*/*', 'user-agent': this.#userAgent },
       })
       if (!response.ok) throw new Error(`subscription HTTP ${response.status}`)
       return await response.text()

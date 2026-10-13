@@ -15,7 +15,7 @@
  * dispose, so a disabled pool keeps the adapter's behavior unchanged.
  */
 
-import type { ExitPool } from './pool.ts'
+import type { ExitPool, ExitTokenUsage } from './pool.ts'
 
 export type RotateFailure = 'transport' | 'limited' | 'refused'
 
@@ -36,6 +36,37 @@ export interface RotateDelegate {
 }
 
 let delegate: RotateDelegate | null = null
+
+/**
+ * The live pool, for token billing from the adapter.
+ *
+ * Separate from the rotate delegate because the two are installed at different
+ * moments and answer different questions: the delegate decides whether to
+ * re-pick, this one records what a finished request cost. Held module-level
+ * for the same reason the delegate is — the adapter is constructed before the
+ * pool exists and must learn about it without a constructor rewrite.
+ */
+let usageSink: ExitPool | null = null
+
+/** Install the pool the adapter bills tokens to (startIpPool). */
+export function setUsageSink(pool: ExitPool | null): void {
+  usageSink = pool
+}
+
+/**
+ * Bill one finished request to the exit that carried it.
+ *
+ * Billed to the pool's LAST ROUTED exit rather than the session's sticky one:
+ * after a rotation those disagree, and the transport layer is what knows
+ * where the bytes actually went. A no-op when no pool is running, which is the
+ * normal direct case.
+ */
+export function billRoutedTokens(tokens: ExitTokenUsage): void {
+  if (usageSink === null) return
+  const routed = usageSink.lastRoutedExit()
+  if (routed === null) return
+  usageSink.recordTokens(routed.exitId, tokens)
+}
 
 /** Install the runtime's rotate delegate (startIpPool). */
 export function setRotateDelegate(next: RotateDelegate | null): void {
