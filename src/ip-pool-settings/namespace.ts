@@ -66,8 +66,13 @@ export function readVolatile<T>(value: VolatileRef<T> | T | undefined): T | unde
 const DEFAULT_PROBE_MODEL = 'big-pickle'
 
 export const IpPoolConfigSchema = Schema.object({
-  /** Master switch; false keeps the process exactly as today (direct). */
-  enabled: Schema.boolean().default(false),
+  /** Master switch. Defaults ON: a fresh install should route and rotate
+   *  without a settings visit, which is the whole point of the plugin. The
+   *  free source is the only lane this can reach — `manual` is empty and
+   *  `subscriptions` unset on a new install — so enabling it costs no
+   *  configuration and can only help a user who hits the per-IP daily
+   *  quota. Anyone who wants it off gets a composer-dock chip that says so. */
+  enabled: Schema.boolean().default(true),
   /** Probe model set; empty = [S3 first] (docs §4.6 probeModels). */
   probeModels: Schema.array(Schema.string()).default([]),
   /** Cross-exit probe concurrency cap (1-32; same-exit is always serial, §4.1). */
@@ -75,9 +80,11 @@ export const IpPoolConfigSchema = Schema.object({
   free: Schema.object({
     /** Free-source fetching master switch (docs §1.2 source 1). */
     enabled: Schema.boolean().default(true),
-    /** Free-pool target capacity (docs §3.5). The ceiling covers a large
-     *  operator pool; selection and admission are linear in this number. */
-    targetSize: Schema.number().min(1).max(1000).step(1).default(20),
+    /** Free-pool target capacity (docs §3.5). 30 rather than 20 because
+     *  admission measured ~11% of candidates at the shipped sources (2026-10-13),
+     *  and free proxies die within the hour: a small target spends most of its
+     *  life in `emergency`, which is the state that actually degrades routing. */
+    targetSize: Schema.number().min(1).max(1000).step(1).default(30),
     /** Admission geo blocklist (ISO country codes). */
     blockedCountries: Schema.array(Schema.string()).default(['CN']),
   }),
@@ -169,12 +176,17 @@ export function resolveIpPoolSettings(value: AnyIpPoolSection | undefined): IpPo
   // the canonical nested list. See subscription-urls.ts for the full reason.
   const urls = resolveSubscriptionUrls(raw)
   return {
-    enabled: raw.enabled ?? false,
+    // Default ON in both places, and they MUST agree: this function bypasses
+    // the schema (it runs on the volatile host config, which is unvalidated),
+    // so a `false` here would silently override an `IpPoolConfigSchema` that
+    // says `true` — the pool would ship disabled for every fresh install while
+    // the schema claimed otherwise.
+    enabled: raw.enabled ?? true,
     probeModels: raw.probeModels ?? [],
     maxConcurrentProbes: raw.maxConcurrentProbes ?? 3,
     free: {
       enabled: raw.free?.enabled ?? true,
-      targetSize: raw.free?.targetSize ?? 20,
+      targetSize: raw.free?.targetSize ?? 30,
       blockedCountries: raw.free?.blockedCountries ?? ['CN'],
     },
     manual: raw.manual ?? [],

@@ -59,7 +59,8 @@ export interface Opencode2dshConfig {
 
 /** docs/ip-pool.md section 5.1 schema (subset owned by config today). */
 export interface IpPoolConfig {
-  /** Master switch; false keeps the process exactly as today (direct). */
+  /** Master switch. Undefined means ON: a fresh install must route and
+   *  rotate without a settings visit. See IpPoolConfigSchema for why. */
   enabled?: boolean
   /** Manually added plain proxies: 'http://h:p' or 'socks5://h:p'. */
   manual?: string[]

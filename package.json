@@ -1,6 +1,6 @@
 {
   "name": "dsh-opencode-router",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "OpenCode Zen free models for DeepSeek Harness: a native dsh-llm adapter that needs no API key, with a proxy exit pool that rotates, probes and scales to hundreds of exits.",
   "icon": "./icon.svg",
   "type": "module",

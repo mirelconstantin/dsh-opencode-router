@@ -282,7 +282,11 @@ export async function startIpPool(
   if (pool.snapshot().total > 0) {
     installer.install()
   } else {
-    logger.warn('opencode2dsh: ipPool enabled but no exits configured; staying direct until settings add exits')
+    // Not a fault, so not a warning: the free pool starts empty and the first
+    // refill round admits exits a few seconds later (line 245 installs as soon
+    // as one lands). A user who never touched settings must not be told to go
+    // configure something they did not break. Say what is happening instead.
+    logger.info('opencode2dsh: IP pool starting empty; scraping public proxy lists. Exits appear in the composer chip as they are admitted.')
   }
   applyConfig()
 

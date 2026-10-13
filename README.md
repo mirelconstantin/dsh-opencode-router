@@ -19,6 +19,12 @@
 
 ## Install
 
+Install it and it works: the exit pool starts **on**, scrapes public proxy
+lists, and rotates your requests across every exit that can actually reach the
+API. There is nothing to configure, no account, no API key, and no tunnel to
+start. Watch it happen in the composer chip (below the input), where exits
+appear as they are admitted — normally within a minute of the first message.
+
 From the GUI's **Add plugin** box:
 
 ```
@@ -200,9 +206,9 @@ Defaults work out of the box. Override them in the profile's `cordis.patch.yml`:
 |---|---|---|
 | `providerId` | `opencode2dsh` | Provider name shown in DSH. |
 | `refreshSeconds` | `300` | Live catalog refresh interval. |
-| `ipPool.enabled` | `false` | Off means every request goes direct, exactly as if the pool were absent. |
+| `ipPool.enabled` | `true` | **On out of the box — a fresh install routes and rotates with no configuration.** Off means every request goes direct, exactly as if the pool were absent. |
 | `ipPool.free.enabled` | `true` | Fetch and admit public proxy lists. |
-| `ipPool.free.targetSize` | `20` | How many usable free exits to keep. The schema accepts 1 to 1000; selection and admission are linear in this number. |
+| `ipPool.free.targetSize` | `30` | How many usable free exits to keep. The schema accepts 1 to 1000; selection and admission are linear in this number. 30 suits the measured admission rate: about 11% of scraped candidates can actually reach the API, and free proxies usually die within the hour, so a smaller target spends most of its life in the emergency state. |
 | `ipPool.free.blockedCountries` | `["CN"]` | ISO country codes whose exits are refused. |
 | `ipPool.manual` | `[]` | Proxy addresses, `http://host:port` or `socks5://host:port`. |
 | `ipPool.subscription.urls` | `[]` | Subscription URLs, refreshed on `refreshMs`. |
